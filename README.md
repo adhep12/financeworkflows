@@ -50,7 +50,7 @@ A connection's badge shows how well it's documented: *Needs documentation* (no s
 
 ## Data
 
-Three collections, all declared in `vibes.json`:
+Four collections, all declared in `vibes.json`:
 
 | Collection | One record per | Notes |
 | --- | --- | --- |
