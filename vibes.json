@@ -1,9 +1,14 @@
 {
   "platform": 1,
   "collections": {
-    "systems":  { "access": "shared" },
-    "flows":    { "access": "shared" },
-    "meta":     { "access": "shared" },
-    "presence": { "access": "shared" }
+    "systems":   { "access": "shared" },
+    "flows":     { "access": "shared" },
+    "meta":      { "access": "shared" },
+    "presence":  { "access": "shared" },
+    "people":    { "access": "shared" },
+    "access":    { "access": "shared" },
+    "functions": { "access": "shared" },
+    "roles":     { "access": "shared" },
+    "processes": { "access": "shared" }
   }
 }
