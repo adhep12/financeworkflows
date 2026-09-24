@@ -1094,9 +1094,10 @@ const gridPattern = $('#grid');
 const stage = $('#stage');
 let view = { x: 0, y: 0, k: 1 };
 let animId = 0;
-const K_MIN = 0.15, K_MAX = 3;
+const K_MIN = 0.05, K_MAX = 3;
 
 function setView(v) {
+  cancelWheelZoom.skip || cancelWheelZoom();
   view = { x: v.x, y: v.y, k: clamp(v.k, K_MIN, K_MAX) };
   const t = `translate(${view.x},${view.y}) scale(${view.k})`;
   viewportG.setAttribute('transform', t);
@@ -1163,19 +1164,76 @@ function fitAll(animate = true) {
   if (!b) { const { w, h } = stageSize(); setView({ x: w / 2, y: h / 2, k: 1 }); return; }
   fitBounds(b, { animate, maxK: 1.2 });
 }
+/* How far someone can zoom depends on the map, not a fixed number: zooming out stops a little
+   past the point where everything fits, so a small map never shrinks to a speck. */
+function zoomLimits() {
+  const b = boundsOf([...state.systems.values()]);
+  if (!b) return { min: 0.5, max: K_MAX };
+  const { w, h } = stageSize();
+  const fit = Math.min((w - 40) / (b.x2 - b.x1), (h - 40) / (b.y2 - b.y1));
+  return { min: clamp(fit * 0.8, 0.08, 0.9), max: K_MAX };
+}
+
+/* Keep at least a corner of the map on screen, so you can't pan off into empty space. */
+function clampPan(v) {
+  const b = boundsOf([...state.systems.values()]);
+  if (!b) return v;
+  const { w, h } = stageSize();
+  const m = 120;
+  const x1 = b.x1 * v.k + v.x, x2 = b.x2 * v.k + v.x, y1 = b.y1 * v.k + v.y, y2 = b.y2 * v.k + v.y;
+  let { x, y } = v;
+  if (x2 < m) x += m - x2; else if (x1 > w - m) x -= x1 - (w - m);
+  if (y2 < m) y += m - y2; else if (y1 > h - m) y -= y1 - (h - m);
+  return { x, y, k: v.k };
+}
+
+function zoomAround(k, sx, sy) {
+  const wx = (sx - view.x) / view.k, wy = (sy - view.y) / view.k;
+  return clampPan({ x: sx - wx * k, y: sy - wy * k, k });
+}
 function zoomBy(f, sx, sy) {
   cancelAnimationFrame(animId);
   const { w, h } = stageSize();
   sx ??= w / 2; sy ??= h / 2;
-  const k = clamp(view.k * f, K_MIN, K_MAX);
-  const wx = (sx - view.x) / view.k, wy = (sy - view.y) / view.k;
-  setView({ x: sx - wx * k, y: sy - wy * k, k });
+  setView(zoomAround(clamp(view.k * f, zoomLimits().min, K_MAX), sx, sy));
 }
 function zoomAnimated(f) {
   const { w, h } = stageSize();
-  const k = clamp(view.k * f, K_MIN, K_MAX);
-  const wx = (w / 2 - view.x) / view.k, wy = (h / 2 - view.y) / view.k;
-  animateTo({ x: w / 2 - wx * k, y: h / 2 - wy * k, k }, 260);
+  const { min, max } = zoomLimits();
+  const base = wheelZoom ? wheelZoom.k : view.k;
+  const k = clamp(base * f, min, max);
+  const a = visibleArea();
+  animateTo(zoomAround(k, a.x + a.w / 2, a.y + a.h / 2), 320);
+}
+
+/* Wheel zoom glides: each wheel event nudges a target zoom level, and the view eases toward it
+   every frame, anchored on the cursor. Fast scrolling just moves the target further, smoothly,
+   and it can't overshoot the limits above. */
+let wheelZoom = null;
+function cancelWheelZoom() {
+  if (wheelZoom) { cancelAnimationFrame(wheelZoom.raf); wheelZoom = null; }
+}
+function wheelZoomBy(f, sx, sy) {
+  cancelAnimationFrame(animId);
+  const { min, max } = zoomLimits();
+  const base = wheelZoom ? wheelZoom.k : view.k;
+  const k = clamp(base * f, Math.min(min, view.k), max);
+  if (!wheelZoom) wheelZoom = { raf: 0 };
+  Object.assign(wheelZoom, { k, sx, sy });
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setView(zoomAround(k, sx, sy)); return; }
+  if (!wheelZoom.raf) wheelZoom.raf = requestAnimationFrame(wheelTick);
+}
+function wheelTick() {
+  const z = wheelZoom;
+  if (!z) return;
+  const lk = Math.log(view.k), lt = Math.log(z.k);
+  const done = Math.abs(lt - lk) < 0.003;
+  const k = done ? z.k : Math.exp(lk + (lt - lk) * 0.22);
+  cancelWheelZoom.skip = true;
+  setView(zoomAround(k, z.sx, z.sy));
+  cancelWheelZoom.skip = false;
+  if (done) wheelZoom = null;
+  else z.raf = requestAnimationFrame(wheelTick);
 }
 
 /* =====================================================================================
@@ -1371,7 +1429,7 @@ svg.addEventListener('pointermove', (e) => {
     if (pointers.size < 2) return;
     const [p, q] = [...pointers.values()];
     const d = Math.hypot(p.x - q.x, p.y - q.y), m = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-    const k = clamp(drag.v0.k * d / drag.d0, K_MIN, K_MAX);
+    const k = clamp(drag.v0.k * d / drag.d0, Math.min(zoomLimits().min, drag.v0.k), K_MAX);
     const wx = (drag.m0.x - drag.v0.x) / drag.v0.k, wy = (drag.m0.y - drag.v0.y) / drag.v0.k;
     setView({ x: m.x - wx * k, y: m.y - wy * k, k });
     return;
@@ -1385,7 +1443,7 @@ svg.addEventListener('pointermove', (e) => {
     if (drag.type === 'node') drag.el.classList.add('dragging');
   }
   if (drag.type === 'pan' || drag.type === 'edge') {
-    setView({ x: drag.v0.x + dx, y: drag.v0.y + dy, k: view.k });
+    setView(clampPan({ x: drag.v0.x + dx, y: drag.v0.y + dy, k: view.k }));
   } else if (drag.type === 'node') {
     const s = sysOf(drag.id);
     s.x = drag.orig.x + dx / view.k; s.y = drag.orig.y + dy / view.k;
@@ -1442,18 +1500,41 @@ function updateHover(t) {
 }
 svg.addEventListener('pointerleave', () => { if (hover) { hover = null; applyHighlight(); } });
 
-/* Mouse wheel and trackpad pinch zoom; two-finger trackpad scroll pans. */
+/* Wheel: a mouse wheel (and vertical scrolling generally) zooms toward the cursor; trackpad
+   pinch zooms 1:1 with the fingers; a trackpad two-finger swipe that moves sideways, or
+   Shift+wheel, pans. Each gesture decides once, so it doesn't flip modes halfway through. */
+const gesture = { t: 0, mode: null };
 svg.addEventListener('wheel', (e) => {
   e.preventDefault();
   cancelAnimationFrame(animId);
   const p = svgPoint(e);
-  const mouseLike = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
-  if (e.ctrlKey || e.metaKey || mouseLike) {
-    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
-    zoomBy(Math.exp(-dy * (e.ctrlKey ? 0.012 : 0.0018)), p.x, p.y);
-  } else {
-    setView({ x: view.x - e.deltaX, y: view.y - e.deltaY, k: view.k });
+  const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+  const dx = e.deltaX * unit, dy = e.deltaY * unit;
+  const now = performance.now();
+  if (now - gesture.t > 220) gesture.mode = null;
+  gesture.t = now;
+
+  if (e.ctrlKey) {
+    // Trackpad pinch (browsers report it as ctrl+wheel): follow the fingers directly.
+    cancelWheelZoom();
+    const { min } = zoomLimits();
+    const k = clamp(view.k * Math.exp(-clamp(dy, -30, 30) * 0.01), Math.min(min, view.k), K_MAX);
+    setView(zoomAround(k, p.x, p.y));
+    return;
   }
+  if (!gesture.mode || (gesture.mode === 'zoom' && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 1)) {
+    gesture.mode = e.shiftKey || (Math.abs(dx) > 1 && Math.abs(dx) >= Math.abs(dy) * 0.5) ? 'pan' : 'zoom';
+  }
+  if (gesture.mode === 'pan') {
+    cancelWheelZoom();
+    const [px, py] = e.shiftKey && !dx ? [dy, 0] : [dx, dy];
+    setView(clampPan({ x: view.x - px, y: view.y - py, k: view.k }));
+    return;
+  }
+  // One wheel "click" is ~100px on most mice; treat it as a fixed 15% step, and scale smaller
+  // smooth-scroll deltas proportionally so high-resolution wheels feel the same.
+  const notch = clamp(Math.abs(dy) / 100, 0.02, 1);
+  wheelZoomBy(Math.pow(1.15, dy < 0 ? notch : -notch), p.x, p.y);
 }, { passive: false });
 
 svg.addEventListener('dblclick', (e) => {
@@ -1995,8 +2076,8 @@ menu.addEventListener('click', (e) => {
 $('#addSystemBtn').addEventListener('click', () => newSystem());
 $('#emptyAdd').addEventListener('click', () => newSystem());
 $('#addFlowBtn').addEventListener('click', () => newConnection(sel?.type === 'system' ? { from: sel.id } : {}));
-$('#zoomIn').addEventListener('click', () => zoomAnimated(1.3));
-$('#zoomOut').addEventListener('click', () => zoomAnimated(1 / 1.3));
+$('#zoomIn').addEventListener('click', () => zoomAnimated(1.25));
+$('#zoomOut').addEventListener('click', () => zoomAnimated(1 / 1.25));
 $('#zoomFit').addEventListener('click', () => fitAll());
 
 document.addEventListener('keydown', (e) => {
@@ -2009,8 +2090,8 @@ document.addEventListener('keydown', (e) => {
   if (typing || dialogOpen() || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '/') { e.preventDefault(); searchInput.focus(); }
   else if (e.key === 'f' || e.key === 'F') fitAll();
-  else if (e.key === '+' || e.key === '=') zoomAnimated(1.3);
-  else if (e.key === '-' || e.key === '_') zoomAnimated(1 / 1.3);
+  else if (e.key === '+' || e.key === '=') zoomAnimated(1.25);
+  else if (e.key === '-' || e.key === '_') zoomAnimated(1 / 1.25);
 });
 
 $('#legendBody').innerHTML = `
