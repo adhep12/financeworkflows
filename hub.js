@@ -197,8 +197,8 @@ export function createHub(ctx) {
     schedulePush(true);
   }
   function applyChrome() {
-    const tabs = [['map', '#/map', 'Data flows', true], ['person', '#/me', 'My role', canPage('myrole')], ['team', '#/team', 'Team', canPage('team')],
-      ['processes', '#/processes', 'Processes', canSeeProcessesTab()], ['settings', '#/settings', 'Settings', isAdmin()]].filter(t => t[3]);
+    const tabs = [['map', '#/map', 'Data flows', true], ['processes', '#/processes', 'Processes', canSeeProcessesTab()], ['team', '#/team', 'Team', canPage('team')],
+      ['person', '#/me', 'My role', canPage('myrole')], ['settings', '#/settings', 'Settings', isAdmin()]].filter(t => t[3]);
     const active = current.name === 'process' ? 'processes' : current.name === 'person' && !current.mine && current.email !== meEmail() ? 'team' : current.name;
     tabsEl.innerHTML = tabs.length > 1 ? tabs.map(([n, h, l]) => `<a href="${h}" class="${n === active ? 'on' : ''}" ${n === active ? 'aria-current="page"' : ''}>${l}</a>`).join('') : '';
     tabsEl.hidden = tabs.length < 2;
