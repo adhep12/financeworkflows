@@ -745,6 +745,9 @@
   .share-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
   .share-row:last-child { border-bottom: 0; }
   .share-row input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .live-status { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+  .live-status dt { color: var(--ink-faint); }
+  .live-status dd { margin: 0; overflow-wrap: anywhere; }
   .hp-me { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
   .hp-me > span:last-child { display: flex; flex-direction: column; }
   .home-opts { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
@@ -878,6 +881,7 @@
       <button data-menu="tidy" role="menuitem">Tidy layout<span class="m-sub">Arrange systems left → right by data flow</span></button>
       <button data-menu="export" role="menuitem">Export as JSON<span class="m-sub">Download a backup of the whole map</span></button>
       <button data-menu="refresh" role="menuitem">Refresh<span class="m-sub">Pull in edits from teammates</span></button>
+      <button data-menu="live" role="menuitem">Live connection status<span class="m-sub">Who the app can see right now</span></button>
     </div>
   </header>
   <div class="banner" id="banner" hidden></div>

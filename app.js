@@ -1640,7 +1640,7 @@ document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e
 menu.addEventListener('click', (e) => {
   const b = e.target.closest('[data-menu]'); if (!b) return;
   menu.hidden = true;
-  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, refresh: () => reload().then(() => toast('Up to date.')) })[b.dataset.menu]();
+  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, refresh: () => reload().then(() => toast('Up to date.')), live: liveStatus })[b.dataset.menu]();
 });
 
 /* =====================================================================================
@@ -1740,6 +1740,26 @@ const SAMPLE_MS = 100, FLUSH_MS = 800, HEARTBEAT_MS = 15000, GONE_MS = 40000, TR
 
 const me = { seq: 0, ci: 0, samples: [], cursor: null, lastSampled: null, rev: 0, editing: null, writing: false, dirty: false, lastWrite: 0 };
 const peers = new Map();
+const diag = { pollOk: 0, pollErr: '', writeOk: 0, writeErr: '', records: 0 };
+
+/* What the live connection can see right now, for when cursors don't show up. */
+function liveStatus() {
+  const all = activePeers(), others = activePeople(), mine = all.filter(p => p.self);
+  const t = (ts) => ts ? ago(ts) : 'never';
+  const rows = [
+    ['Live updates', store.mode !== 'remote' ? 'Off: this is a local preview with no platform' : presenceOn ? 'On' : 'Off: storage is full'],
+    ['Signed in as', user.email || 'unknown (no email from sign-in)'],
+    ['Last check for others', diag.pollErr ? `failed ${t(diag.pollErrAt)}: ${diag.pollErr}` : t(diag.pollOk)],
+    ['Last update sent', diag.writeErr ? `failed ${t(diag.writeErrAt)}: ${diag.writeErr}` : t(diag.writeOk)],
+    ['Open windows found', `${diag.records} (including this one)`],
+    ['Other people here now', others.length ? others.map(p => `${p.name} — ${whereIs(p)}`).join('; ') : 'none'],
+    ['Your other windows', mine.length ? `${mine.length} (their cursors show as “You (other window)”)` : 'none'],
+  ];
+  openDialog(`<form method="dialog"><h2>Live connection</h2>
+    <p class="d-sub">Cursors show when someone else has the Data flows map open and moves their mouse over it. Allow a second or two.</p>
+    <dl class="live-status">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+    <div class="d-actions"><button class="btn primary" value="ok">Close</button></div></form>`, () => true);
+}
 let presenceOn = false, pushTimer = 0;
 
 function presenceRecord() {
@@ -1758,7 +1778,9 @@ async function pushPresence() {
   me.writing = true; me.dirty = false; me.lastWrite = Date.now();
   try {
     await store.rec.put('presence', TAB, presenceRecord());
+    diag.writeOk = Date.now(); diag.writeErr = '';
   } catch (err) {
+    diag.writeErr = err?.message || String(err); diag.writeErrAt = Date.now();
     if (err?.full) presenceOn = false;
     else if (err?.conflict) { try { await store.rec.get('presence', TAB); await store.rec.put('presence', TAB, presenceRecord()); } catch { } }
   } finally {
@@ -1779,7 +1801,7 @@ function presenceRev() { me.rev = Date.now(); schedulePush(true); }
 function presencePointer(w) {
   const was = !!me.cursor;
   me.cursor = w ? { x: Math.round(w.x), y: Math.round(w.y) } : null;
-  if (was && !w && activePeople().length) schedulePush(false);
+  if (was && !w && activePeers().length) schedulePush(false);
 }
 setInterval(() => {
   if (!presenceOn || document.hidden) return;
@@ -1789,16 +1811,18 @@ setInterval(() => {
   if (me.samples.length > TRAIL) me.samples.shift();
   me.ci++;
   me.lastSampled = c;
-  if (activePeople().length) schedulePush(false);   // nobody watching → don't spend writes on it
+  if (activePeers().length) schedulePush(false);   // nobody watching → don't spend writes on it
 }, SAMPLE_MS);
 setInterval(() => { if (presenceOn && !document.hidden) pushPresence(); }, HEARTBEAT_MS);
 
 /* ---- Reading everyone else ---- */
 const activePeers = () => [...peers.values()].filter(p => p.lastChange && Date.now() - p.lastChange < GONE_MS);
-/* One entry per person, even if they have the map open in two tabs (most recently active wins). */
+/* One entry per OTHER person, even if they have the map open in two tabs (most recently active
+   wins). Your own other windows aren't people, but their cursors still show (see activePeers). */
 function activePeople() {
   const by = new Map();
   for (const p of activePeers()) {
+    if (p.self) continue;
     const k = p.email || p.key;
     const cur = by.get(k);
     if (!cur || (cur.away && !p.away) || (cur.away === p.away && p.lastChange > cur.lastChange)) by.set(k, p);
@@ -1814,7 +1838,7 @@ function ingestPresence(list) {
     const d = r.data || {};
     // Tidy up tabs that closed without saying goodbye. Only ever ephemeral presence records.
     if (d.ts && now - d.ts > 2 * 3600e3) { store.rec.remove('presence', r.key).catch(() => { }); continue; }
-    if (user.email && d.email === user.email) continue;   // you, in another tab
+    const self = !!user.email && d.email === user.email;   // you, in another window
     seen.add(r.key);
     let p = peers.get(r.key);
     if (!p) {
@@ -1842,7 +1866,7 @@ function ingestPresence(list) {
       sel: d.sel && typeof d.sel.id === 'string' && (d.sel.type === 'system' || d.sel.type === 'flow') ? d.sel : null,
       editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
       route: typeof d.route === 'string' ? d.route.slice(0, 200) : '',
-      away: !!d.away,
+      away: !!d.away, self,
     });
   }
   for (const k of [...peers.keys()]) if (!seen.has(k)) peers.delete(k);
@@ -1853,10 +1877,14 @@ function ingestPresence(list) {
 async function pollPresence() {
   if (!presenceOn) return;
   if (!document.hidden) {
-    try { ingestPresence(await store.listAll('presence')); } catch { /* offline — try again next tick */ }
+    try {
+      const list = await store.listAll('presence');
+      diag.pollOk = Date.now(); diag.pollErr = ''; diag.records = list.length;
+      ingestPresence(list);
+    } catch (err) { diag.pollErr = err?.message || String(err); diag.pollErrAt = Date.now(); /* try again next tick */ }
     if (needsReload || Date.now() - lastRefresh > 30000) reload();
   }
-  setTimeout(pollPresence, activePeople().length ? 1000 : 3000);
+  setTimeout(pollPresence, activePeers().length ? 1000 : 3000);
 }
 
 function startPresence() {
@@ -1986,7 +2014,7 @@ function cursorFrame(now) {
     }
     el.style.setProperty('--pc', p.color);
     el.style.color = p.color;
-    const label = p.first || p.name;
+    const label = p.self ? 'You (other window)' : (p.first || p.name);
     if (el.lastChild.textContent !== label) el.lastChild.textContent = label;
     advanceCursor(p, now);
     const show = p.onCanvas && !p.away && p.pos;

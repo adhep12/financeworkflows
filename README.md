@@ -68,6 +68,10 @@ tab reads the collection once a second. A tab only writes about once a second wh
 moves *and* someone else is watching, every 15 seconds otherwise, and not at all when hidden.
 Someone disappears when they close the tab, or 40 seconds after their tab goes quiet.
 
+Your own other windows show too, as "You (other window)", so you can check it's working on your
+own. If cursors don't appear, **⋯ → Live connection status** shows what the app can see: when it
+last checked for others, whether its own updates are going out, and who's here.
+
 ## Using it
 
 | To… | Do this |
