@@ -1,0 +1,8 @@
+{
+  "platform": 1,
+  "collections": {
+    "systems": { "access": "shared" },
+    "flows":   { "access": "shared" },
+    "meta":    { "access": "shared" }
+  }
+}
