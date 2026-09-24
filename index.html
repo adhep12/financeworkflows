@@ -476,6 +476,51 @@
   .toast button { border: 0; background: none; color: inherit; font-weight: 600; text-decoration: underline; padding: 0; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
+  /* ---------- Live presence ---------- */
+  .peers { display: flex; align-items: center; padding-left: 4px; }
+  .peer {
+    position: relative; width: 28px; height: 28px; margin-left: -5px; padding: 0; overflow: hidden;
+    border-radius: 50%; border: 2px solid var(--panel); background: var(--pc); color: #fff;
+    font-size: 10.5px; font-weight: 700; display: grid; place-items: center;
+    transition: transform .15s, opacity .3s;
+  }
+  .peer:hover { transform: translateY(-2px); z-index: 1; }
+  .peer img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .peer.away { opacity: .45; }
+  .peer.more { background: var(--muted-bg); color: var(--ink-soft); cursor: default; }
+  .peer.more:hover { transform: none; }
+
+  .cursors { position: absolute; inset: 0; pointer-events: none; z-index: 6; overflow: hidden; }
+  .cursor { position: absolute; left: 0; top: 0; will-change: transform; transition: opacity .3s; }
+  .cursor svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
+  .cursor span {
+    position: absolute; left: 13px; top: 17px; white-space: nowrap;
+    background: var(--pc); color: #fff; font-size: 11.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+  .cursor.hide { opacity: 0; }
+
+  .peer-ring { fill: none; stroke-width: 2.5; pointer-events: none; }
+  .peer-tag { pointer-events: none; }
+  .peer-tag text { fill: #fff; font-size: 11px; font-weight: 600; }
+
+  .here { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .here-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    padding: 2px 10px 2px 7px; border-radius: 999px;
+    background: color-mix(in srgb, var(--pc) 14%, transparent); color: var(--ink);
+  }
+  .here-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--pc); }
+  .tl-step.peer-editing .tl-card { box-shadow: 0 0 0 2px var(--peer); }
+  .tl-peer { display: block; font-size: 11px; font-weight: 600; color: var(--peer); margin-bottom: 2px; }
+  .tl-peer:empty { display: none; }
+
+  .node.remote-flash .node-card { animation: rflash 1.8s ease-out; }
+  .edge.remote-flash .edge-line { animation: rflash-line 1.8s ease-out; }
+  .edge-label.remote-flash .pill { animation: rflash 1.8s ease-out; }
+  @keyframes rflash { 0%, 30% { stroke: var(--focus); stroke-width: 4; } }
+  @keyframes rflash-line { 0%, 30% { stroke-width: 6; } }
+
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .node:focus-visible { outline: none; }
 
@@ -483,6 +528,7 @@
     .edge-pulse { display: none; }
     .timeline::before { animation: none; }
     .drawer, .zoombar { transition: none; }
+    .node.remote-flash .node-card, .edge.remote-flash .edge-line, .edge-label.remote-flash .pill { animation: none; }
   }
 
   @media (max-width: 760px) {
@@ -525,6 +571,7 @@
       <button class="btn" id="addSystemBtn" title="Add a system"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">System</span></button>
       <button class="btn primary" id="addFlowBtn" title="Add a connection between two systems"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 12h13M13 6l6 6-6 6"/></svg><span class="lbl">Connection</span></button>
       <button class="icon-btn" id="menuBtn" aria-label="More" aria-haspopup="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+      <div class="peers" id="peers" hidden aria-label="Who else is here"></div>
       <div class="user" id="user" hidden><img id="avatar" alt="" hidden><span class="u-name" id="userName"></span></div>
     </div>
     <div class="menu" id="menu" hidden role="menu">
@@ -557,9 +604,12 @@
         <g id="edges"></g>
         <g id="labels"></g>
         <g id="nodes"></g>
+        <g id="peerMarks"></g>
         <path id="ghost" class="ghost" hidden/>
       </g>
     </svg>
+
+    <div class="cursors" id="cursors" aria-hidden="true"></div>
 
     <div class="hint" id="hint" hidden>
       <span><b>Scroll</b> to zoom · <b>drag</b> to pan · <b>double-click</b> to add a system · drag a system's <b>●</b> to connect it</span>
@@ -793,7 +843,8 @@ function renderSaveState() {
     el.classList.add('saving');
     txt.textContent = 'Saving…';
   } else {
-    txt.textContent = 'All changes saved · shared with the BibleProject team';
+    const n = typeof activePeople === 'function' ? activePeople().length : 0;
+    txt.textContent = n ? `All changes saved · live with ${n} other${n > 1 ? 's' : ''}` : 'All changes saved · shared with the BibleProject team';
   }
 }
 
@@ -953,6 +1004,7 @@ async function runQueue(q) {
     }
     stash(q.coll, q.key, null);
     queues.delete(`${q.coll}/${q.key}`);
+    presenceRev();
   } catch (err) {
     q.failed = true;
     saveUI.failed = true;
@@ -986,7 +1038,7 @@ async function deleteEntity(coll, key) {
   queues.delete(id);
   stash(coll, key, null);
   mapOf(coll).delete(key);
-  try { await store.remove(coll, key); }
+  try { await store.remove(coll, key); presenceRev(); }
   catch (err) { toast(explain(err), { error: true }); await reload(); }
 }
 
@@ -1072,15 +1124,37 @@ async function load() {
   return true;
 }
 
-let lastRefresh = 0;
+let lastRefresh = 0, needsReload = false, drawerStale = false;
+const snapshot = () => {
+  const m = new Map();
+  for (const [k, v] of state.systems) m.set(`system/${k}`, JSON.stringify(v));
+  for (const [k, v] of state.flows) m.set(`flow/${k}`, JSON.stringify(v));
+  return m;
+};
+/* Pull in teammates' edits. Runs when someone else saves (their presence says so), on a slow
+   timer as a backstop, and when the window regains focus. Never interrupts a drag, an open
+   dialog or an edit of ours that hasn't saved yet — it just tries again a moment later. */
 async function reload() {
-  if (dialogOpen() || drag || hasPendingSaves()) return;
+  if (dialogOpen() || drag || hasPendingSaves()) { needsReload = true; return; }
+  needsReload = false;
   lastRefresh = Date.now();
   try {
+    const before = snapshot();
     applyFetched(await fetchAll());
-    if (sel && !mapOf(collOf(sel.type)).has(sel.id)) closeDrawer();
+    const after = snapshot();
+    const changed = [...after].filter(([k, v]) => before.get(k) !== v).map(([k]) => k);
+    const removed = [...before.keys()].filter(k => !after.has(k));
+    if (!changed.length && !removed.length) return;
+    if (sel && !mapOf(collOf(sel.type)).has(sel.id)) { closeDrawer(); toast('A teammate just deleted what you had open.'); }
     renderCanvas();
-    if (!drawerHasFocus()) renderDrawer();
+    for (const k of changed) {
+      const [type, id] = [k.slice(0, k.indexOf('/')), k.slice(k.indexOf('/') + 1)];
+      const els = type === 'system' ? $$(`.node[data-node="${CSS.escape(id)}"]`) : $$(`[data-edge="${CSS.escape(id)}"]`);
+      els.forEach(el => { el.classList.add('remote-flash'); setTimeout(() => el.classList.remove('remote-flash'), 1900); });
+    }
+    if (sel && (changed.includes(`${sel.type}/${sel.id}`) || changed.some(k => k.startsWith('flow/')))) {
+      if (drawerHasFocus()) drawerStale = true; else renderDrawer();
+    }
   } catch { /* offline — keep what's on screen */ }
 }
 addEventListener('focus', () => { if (Date.now() - lastRefresh > 15000) reload(); });
@@ -1328,6 +1402,7 @@ function renderEdges() {
     const st = statusOf(f);
     const text = fitText(f.name || LINK_KINDS[k].label, labelFont, 170);
     const w = Math.ceil(textWidth(text, labelFont)) + 34;
+    g.labelW = w;
     const steps = f.steps || [];
     const dotGap = 22, dotsW = (steps.length - 1) * dotGap;
     const dots = steps.map((s, i) => `<g class="step-dot" data-step="${i}" transform="translate(${-dotsW / 2 + i * dotGap},0)">
@@ -1343,12 +1418,15 @@ function renderEdges() {
   }
   $('#edges').innerHTML = lines.join('');
   $('#labels').innerHTML = labels.join('');
+  edgeGeo = geo;
 }
 
+let edgeGeo = null;
 function renderCanvas() {
   renderNodes();
   renderEdges();
   applyHighlight();
+  renderPeerMarks();
   const empty = state.systems.size === 0;
   $('#loading').hidden = true;
   $('#emptyCard').hidden = !empty;
@@ -1424,6 +1502,7 @@ svg.addEventListener('pointerdown', (e) => {
 
 svg.addEventListener('pointermove', (e) => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, svgPoint(e));
+  if (e.pointerType === 'mouse' || e.pointerType === 'pen') { const sp = svgPoint(e); presencePointer(toWorld(sp.x, sp.y)); }
   if (!drag) { updateHover(e.target); return; }
   if (drag.type === 'pinch') {
     if (pointers.size < 2) return;
@@ -1448,7 +1527,7 @@ svg.addEventListener('pointermove', (e) => {
     const s = sysOf(drag.id);
     s.x = drag.orig.x + dx / view.k; s.y = drag.orig.y + dy / view.k;
     drag.el.setAttribute('transform', `translate(${s.x - NODE_W / 2},${s.y - NODE_H / 2})`);
-    renderEdges(); applyHighlight();
+    renderEdges(); applyHighlight(); renderPeerMarks();
   } else if (drag.type === 'link') {
     const a = sysOf(drag.from), w = toWorld(p.x, p.y);
     const x0 = a.x + NODE_W / 2, y0 = a.y;
@@ -1498,7 +1577,7 @@ function updateHover(t) {
   if (h?.type === hover?.type && h?.id === hover?.id) return;
   hover = h; applyHighlight();
 }
-svg.addEventListener('pointerleave', () => { if (hover) { hover = null; applyHighlight(); } });
+svg.addEventListener('pointerleave', () => { presencePointer(null); if (hover) { hover = null; applyHighlight(); } });
 
 /* Wheel: a mouse wheel (and vertical scrolling generally) zooms toward the cursor; trackpad
    pinch zooms 1:1 with the fingers; a trackpad two-finger swipe that moves sideways, or
@@ -1570,6 +1649,7 @@ function select(type, id, { focus = true, step = null } = {}) {
   stage.classList.add('drawer-open');
   if (focus) focusSelection();
   if (step != null) flashStep(step);
+  if (!same) schedulePush(true);
 }
 
 function focusSelection() {
@@ -1589,6 +1669,8 @@ function focusSelection() {
 function closeDrawer() {
   flushDebounced();
   sel = null;
+  me.editing = null;
+  schedulePush(true);
   drawer.classList.remove('open');
   stage.classList.remove('drawer-open');
   applyHighlight();
@@ -1612,6 +1694,8 @@ function renderDrawer() {
   else renderFlowDrawer(state.flows.get(sel.id));
   drScroll.scrollTop = top;
   $$('textarea', drawer).forEach(autosize);
+  drawerStale = false;
+  renderDrawerPresence();
 }
 
 function renderSystemDrawer(s) {
@@ -1638,6 +1722,7 @@ function renderSystemDrawer(s) {
         </select></span>
       <button class="icon-btn" data-act="close" aria-label="Close">✕</button>
     </div>
+    <div class="here" id="drHere" hidden></div>
     <input class="dr-title" data-field="name" value="${esc(s.name)}" placeholder="System name" aria-label="System name">
     <label class="fld"><span>What it's used for</span>
       <textarea data-field="description" rows="2" placeholder="What data lives here, and what the team uses it for">${esc(s.description)}</textarea></label>
@@ -1666,6 +1751,7 @@ function renderFlowDrawer(f) {
     return `<li class="tl-step" data-sid="${esc(s.id)}" style="--c:${k.color}">
       <span class="tl-num">${i + 1}</span>
       <div class="tl-card">
+        <span class="tl-peer"></span>
         <textarea class="tl-text" data-sfield="text" rows="1" placeholder="Describe this step…" aria-label="Step ${i + 1}">${esc(s.text)}</textarea>
         <div class="tl-meta">
           <select class="kind-select" data-sfield="kind" aria-label="Step type">
@@ -1691,6 +1777,7 @@ function renderFlowDrawer(f) {
       <span class="badge ${st.cls}">${esc(st.label)}</span>
       <button class="icon-btn" data-act="close" aria-label="Close">✕</button>
     </div>
+    <div class="here" id="drHere" hidden></div>
     <div class="route">
       <button class="sys-chip" data-act="open-sys" data-id="${esc(f.from)}">${iniChip(a)}${esc(a?.name || '?')}</button>
       <span class="route-arrow">${isFlow ? '→' : '⇄'}</span>
@@ -1752,7 +1839,20 @@ drawer.addEventListener('change', (e) => {
   }
   renderDrawer();
 });
+drawer.addEventListener('focusin', (e) => {
+  const el = e.target;
+  const sid = el.closest?.('[data-sid]')?.dataset.sid;
+  const field = el.dataset?.sfield || el.dataset?.field;
+  if (!field) return;
+  me.editing = sid ? { sid, field } : { field };
+  schedulePush(true);
+});
 drawer.addEventListener('focusout', (e) => {
+  if (!drawer.contains(e.relatedTarget)) {
+    me.editing = null;
+    schedulePush(true);
+    if (drawerStale) setTimeout(() => { if (!drawerHasFocus()) renderDrawer(); }, 0);
+  }
   if (e.target.matches('input, textarea')) flushDebounced();
   if (e.target.dataset.field === 'url' || e.target.dataset.sfield === 'tool') setTimeout(() => { if (!drawerHasFocus()) renderDrawer(); }, 0);
 });
@@ -2113,9 +2213,294 @@ addEventListener('resize', () => { if (sel) focusSelection(); });
 setInterval(() => { if (sel && !drawerHasFocus()) { const t = $('span', drFoot); const e = mapOf(collOf(sel.type)).get(sel.id); if (t && e) t.innerHTML = footText(e); } }, 30000);
 
 /* =====================================================================================
+   Live presence: who's here, where their cursor is, what they have open
+   -------------------------------------------------------------------------------------
+   The platform has no live channel, only the records store, so presence is built on it:
+   each open tab keeps one record in the `presence` collection and rewrites it about once a
+   second while its cursor moves (every 15s otherwise), and every tab lists the collection
+   every second. Cursor movement is sent as a short trail of samples taken every 100ms, which
+   the other screens replay, so a cursor glides along the path it actually took, about a
+   second behind, instead of hopping between snapshots.
+   Each record also carries `rev`, bumped whenever that person saves. Seeing a teammate's
+   rev change is what triggers pulling their edits in, so edits show up within a second or
+   two without everyone re-reading the whole map constantly.
+   ===================================================================================== */
+const PEER_COLORS = ['#E5484D', '#3E63DD', '#1F9D55', '#F76B15', '#8E4EC6', '#D6409F', '#0891B2', '#B45309'];
+const hashColor = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return PEER_COLORS[Math.abs(h) % PEER_COLORS.length]; };
+const safeColor = (c, fallback) => /^#[0-9a-f]{6}$/i.test(c || '') ? c : fallback;
+const TAB = rid('tab');
+const SAMPLE_MS = 100, FLUSH_MS = 800, HEARTBEAT_MS = 15000, GONE_MS = 40000, TRAIL = 16;
+
+const me = { seq: 0, ci: 0, samples: [], cursor: null, lastSampled: null, rev: 0, editing: null, writing: false, dirty: false, lastWrite: 0 };
+const peers = new Map();
+let presenceOn = false, pushTimer = 0;
+
+function presenceRecord() {
+  return { data: {
+    name: user.name || 'Someone', first: user.first || '', email: user.email || '', avatar: user.avatar || '',
+    color: user.color, seq: ++me.seq, ts: Date.now(),
+    cursor: !!me.cursor && !document.hidden, ci: me.ci, samples: me.samples.slice(-TRAIL),
+    sel: sel ? { type: sel.type, id: sel.id } : null, editing: me.editing, rev: me.rev, away: document.hidden,
+  } };
+}
+
+async function pushPresence() {
+  if (!presenceOn) return;
+  if (me.writing) { me.dirty = true; return; }
+  me.writing = true; me.dirty = false; me.lastWrite = Date.now();
+  try {
+    await store.rec.put('presence', TAB, presenceRecord());
+  } catch (err) {
+    if (err?.full) presenceOn = false;
+    else if (err?.conflict) { try { await store.rec.get('presence', TAB); await store.rec.put('presence', TAB, presenceRecord()); } catch { } }
+  } finally {
+    me.writing = false;
+    if (me.dirty) schedulePush(false);
+  }
+}
+/* urgent: selection/editing changes go out right away. Cursor trails are batched. */
+function schedulePush(urgent) {
+  if (!presenceOn) return;
+  if (!urgent && pushTimer) return;
+  clearTimeout(pushTimer);
+  const wait = urgent ? 60 : Math.max(0, me.lastWrite + FLUSH_MS - Date.now());
+  pushTimer = setTimeout(() => { pushTimer = 0; pushPresence(); }, wait);
+}
+function presenceRev() { me.rev = Date.now(); schedulePush(true); }
+
+function presencePointer(w) {
+  const was = !!me.cursor;
+  me.cursor = w ? { x: Math.round(w.x), y: Math.round(w.y) } : null;
+  if (was && !w && activePeople().length) schedulePush(false);
+}
+setInterval(() => {
+  if (!presenceOn || document.hidden) return;
+  const c = me.cursor;
+  if (!c || (me.lastSampled && c.x === me.lastSampled.x && c.y === me.lastSampled.y)) return;
+  me.samples.push([c.x, c.y]);
+  if (me.samples.length > TRAIL) me.samples.shift();
+  me.ci++;
+  me.lastSampled = c;
+  if (activePeople().length) schedulePush(false);   // nobody watching → don't spend writes on it
+}, SAMPLE_MS);
+setInterval(() => { if (presenceOn && !document.hidden) pushPresence(); }, HEARTBEAT_MS);
+
+/* ---- Reading everyone else ---- */
+const activePeers = () => [...peers.values()].filter(p => p.lastChange && Date.now() - p.lastChange < GONE_MS);
+/* One entry per person, even if they have the map open in two tabs (most recently active wins). */
+function activePeople() {
+  const by = new Map();
+  for (const p of activePeers()) {
+    const k = p.email || p.key;
+    const cur = by.get(k);
+    if (!cur || (cur.away && !p.away) || (cur.away === p.away && p.lastChange > cur.lastChange)) by.set(k, p);
+  }
+  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function ingestPresence(list) {
+  const now = Date.now(), seen = new Set();
+  let theyEdited = false;
+  for (const r of list) {
+    if (r.key === TAB) continue;
+    const d = r.data || {};
+    // Tidy up tabs that closed without saying goodbye. Only ever ephemeral presence records.
+    if (d.ts && now - d.ts > 2 * 3600e3) { store.rec.remove('presence', r.key).catch(() => { }); continue; }
+    if (user.email && d.email === user.email) continue;   // you, in another tab
+    seen.add(r.key);
+    let p = peers.get(r.key);
+    if (!p) {
+      p = { key: r.key, seq: d.seq, ci: d.ci || 0, rev: d.rev || 0, queue: [], pos: null, seg: null,
+        lastChange: Math.abs(now - (d.ts || 0)) < 45000 ? now : 0 };
+      peers.set(r.key, p);
+    } else if (d.seq !== p.seq) {
+      p.seq = d.seq; p.lastChange = now;
+    }
+    if ((d.rev || 0) > p.rev) { p.rev = d.rev; theyEdited = true; }
+    const samples = Array.isArray(d.samples) ? d.samples.filter(s => Array.isArray(s) && Number.isFinite(s[0]) && Number.isFinite(s[1])) : [];
+    if (d.cursor && samples.length) {
+      const fresh = Math.min((d.ci || 0) - p.ci, samples.length);
+      if (!p.pos || !p.onCanvas) { const [x, y] = samples[samples.length - 1]; p.pos = { x, y }; p.queue = []; p.seg = null; }
+      else if (fresh > 0) p.queue.push(...samples.slice(-fresh).map(([x, y]) => ({ x, y })));
+      p.onCanvas = true;
+    } else p.onCanvas = false;
+    p.ci = d.ci || 0;
+    const name = String(d.name || 'Someone').slice(0, 80);
+    Object.assign(p, {
+      name, first: String(d.first || name.split(' ')[0]).slice(0, 40),
+      email: typeof d.email === 'string' ? d.email : '',
+      avatar: /^https?:\/\//i.test(d.avatar || '') ? d.avatar : '',
+      color: safeColor(d.color, hashColor(d.email || r.key)),
+      sel: d.sel && typeof d.sel.id === 'string' && (d.sel.type === 'system' || d.sel.type === 'flow') ? d.sel : null,
+      editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
+      away: !!d.away,
+    });
+  }
+  for (const k of [...peers.keys()]) if (!seen.has(k)) peers.delete(k);
+  if (theyEdited) needsReload = true;
+  renderPresence();
+}
+
+async function pollPresence() {
+  if (!presenceOn) return;
+  if (!document.hidden) {
+    try { ingestPresence(await store.listAll('presence')); } catch { /* offline — try again next tick */ }
+    if (needsReload || Date.now() - lastRefresh > 30000) reload();
+  }
+  setTimeout(pollPresence, activePeople().length ? 1000 : 3000);
+}
+
+function startPresence() {
+  if (store.mode !== 'remote' || presenceOn) return;
+  presenceOn = true;
+  pushPresence();
+  pollPresence();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!presenceOn) return;
+  if (document.hidden) { me.cursor = null; pushPresence(); }
+  else { schedulePush(true); if (Date.now() - lastRefresh > 5000) reload(); }
+});
+addEventListener('pagehide', () => { if (presenceOn) store.rec.remove('presence', TAB).catch(() => { }); });
+
+/* ---- Showing them ---- */
+function whereIs(p) {
+  if (p.away) return 'away from the map';
+  if (!p.sel) return 'looking around the map';
+  if (p.sel.type === 'system') return `viewing ${sysOf(p.sel.id)?.name || 'a system'}`;
+  const f = state.flows.get(p.sel.id);
+  return f ? `viewing ${sysOf(f.from)?.name} ${f.kind === 'flow' ? '→' : '⇄'} ${sysOf(f.to)?.name}` : 'viewing a connection';
+}
+
+function renderPresence() {
+  const people = activePeople();
+  const box = $('#peers');
+  box.innerHTML = people.slice(0, 5).map(p => `<button class="peer${p.away ? ' away' : ''}" data-peer="${esc(p.key)}" style="--pc:${p.color}" title="${esc(p.name)} — ${esc(whereIs(p))}" aria-label="${esc(p.name)}, ${esc(whereIs(p))}">
+      <span>${esc(initials(p.name))}</span>${p.avatar ? `<img src="${esc(p.avatar)}" alt="" onerror="this.remove()">` : ''}</button>`).join('')
+    + (people.length > 5 ? `<span class="peer more" title="${esc(people.slice(5).map(p => p.name).join(', '))}">+${people.length - 5}</span>` : '');
+  box.hidden = !people.length;
+  renderPeerMarks();
+  renderDrawerPresence();
+  renderSaveState();
+  startCursorLoop();
+}
+
+$('#peers').addEventListener('click', (e) => {
+  const p = peers.get(e.target.closest('[data-peer]')?.dataset.peer);
+  if (!p) return;
+  if (p.sel && mapOf(collOf(p.sel.type)).has(p.sel.id)) select(p.sel.type, p.sel.id);
+  else if (p.pos) {
+    const a = visibleArea();
+    animateTo({ x: a.x + a.w / 2 - p.pos.x * view.k, y: a.y + a.h / 2 - p.pos.y * view.k, k: view.k });
+  } else toast(`${p.first || p.name} is ${whereIs(p)}.`);
+});
+
+/* Coloured rings and name tags on whatever each person has open. */
+function renderPeerMarks() {
+  const g = $('#peerMarks');
+  if (!g) return;
+  const groups = new Map();
+  for (const p of activePeople()) {
+    if (!p.sel || p.away) continue;
+    const k = `${p.sel.type}/${p.sel.id}`;
+    (groups.get(k) || groups.set(k, []).get(k)).push(p);
+  }
+  let out = '';
+  for (const ps of groups.values()) {
+    const { type, id } = ps[0].sel;
+    let box;
+    if (type === 'system') {
+      const s = sysOf(id); if (!s) continue;
+      box = { x: s.x - NODE_W / 2, y: s.y - NODE_H / 2, w: NODE_W, h: NODE_H, r: 14 };
+    } else {
+      const eg = edgeGeo?.get(id); if (!eg) continue;
+      box = { x: eg.mid.x - eg.labelW / 2, y: eg.mid.y - 12, w: eg.labelW, h: 24, r: 12 };
+    }
+    ps.forEach((p, i) => {
+      const pad = 5 + i * 4;
+      out += `<rect class="peer-ring" x="${box.x - pad}" y="${box.y - pad}" width="${box.w + pad * 2}" height="${box.h + pad * 2}" rx="${box.r + pad}" stroke="${p.color}"/>`;
+    });
+    let tx = box.x - 5;
+    const ty = box.y - 9 - (ps.length - 1) * 4 - 18;
+    for (const p of ps) {
+      const name = p.first || p.name;
+      const w = Math.ceil(textWidth(name, `600 11px ${FONT}`)) + 14;
+      out += `<g class="peer-tag" transform="translate(${tx},${ty})"><rect width="${w}" height="18" rx="5" fill="${p.color}"/><text x="7" y="12.5">${esc(name)}</text></g>`;
+      tx += w + 4;
+    }
+  }
+  g.innerHTML = out;
+}
+
+/* "Jordan is here too" in the panel, and a highlight on the step they're typing in. */
+function renderDrawerPresence() {
+  const here = $('#drHere');
+  if (!here || !sel) return;
+  const ps = activePeople().filter(p => !p.away && p.sel?.type === sel.type && p.sel?.id === sel.id);
+  const f = sel.type === 'flow' ? state.flows.get(sel.id) : null;
+  here.innerHTML = ps.map(p => {
+    let what = ' is here too';
+    if (p.editing?.sid && f) { const i = f.steps.findIndex(s => s.id === p.editing.sid); if (i >= 0) what = ` is editing step ${i + 1}`; }
+    else if (p.editing) what = ' is editing';
+    return `<span class="here-chip" style="--pc:${p.color}"><i></i>${esc(p.first || p.name)}${what}</span>`;
+  }).join('');
+  here.hidden = !ps.length;
+  for (const li of $$('.tl-step', drScroll)) {
+    const ed = ps.find(p => p.editing?.sid === li.dataset.sid);
+    li.classList.toggle('peer-editing', !!ed);
+    if (ed) li.style.setProperty('--peer', ed.color); else li.style.removeProperty('--peer');
+    const tag = $('.tl-peer', li);
+    if (tag) tag.textContent = ed ? `${ed.first || ed.name} is editing this step` : '';
+  }
+}
+
+/* ---- Cursors: replay each person's trail, one sample per 100ms ---- */
+const cursorsEl = $('#cursors');
+const cursorEls = new Map();
+let cursorRaf = 0;
+function startCursorLoop() { if (!cursorRaf && activePeers().length) cursorRaf = requestAnimationFrame(cursorFrame); }
+function cursorFrame(now) {
+  cursorRaf = 0;
+  const live = activePeers();
+  const liveKeys = new Set(live.map(p => p.key));
+  for (const [k, el] of cursorEls) if (!liveKeys.has(k)) { el.remove(); cursorEls.delete(k); }
+  for (const p of live) {
+    let el = cursorEls.get(p.key);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'cursor hide';
+      el.innerHTML = `<svg width="18" height="22" viewBox="0 0 18 22"><path d="M1.5 1.5v16.2l4.4-4.1 2.9 6.6 3-1.3-2.9-6.5h6z" fill="currentColor" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg><span></span>`;
+      cursorsEl.append(el);
+      cursorEls.set(p.key, el);
+    }
+    el.style.setProperty('--pc', p.color);
+    el.style.color = p.color;
+    const label = p.first || p.name;
+    if (el.lastChild.textContent !== label) el.lastChild.textContent = label;
+    advanceCursor(p, now);
+    const show = p.onCanvas && !p.away && p.pos;
+    el.classList.toggle('hide', !show);
+    if (p.pos) el.style.transform = `translate(${p.pos.x * view.k + view.x - 1.5}px, ${p.pos.y * view.k + view.y - 1.5}px)`;
+  }
+  if (live.length) cursorRaf = requestAnimationFrame(cursorFrame);
+}
+function advanceCursor(p, now) {
+  if (!p.pos) return;
+  if (!p.seg) {
+    if (!p.queue.length) return;
+    p.seg = { from: { ...p.pos }, to: p.queue.shift(), t0: now };
+  }
+  // Catch up a little faster if we've fallen behind, so the lag never grows.
+  const dur = SAMPLE_MS * (p.queue.length > 12 ? 0.35 : p.queue.length > 6 ? 0.7 : 1);
+  const t = Math.min(1, (now - p.seg.t0) / dur);
+  p.pos = { x: p.seg.from.x + (p.seg.to.x - p.seg.from.x) * t, y: p.seg.from.y + (p.seg.to.y - p.seg.from.y) * t };
+  if (t >= 1) { p.seg = null; if (p.queue.length > 40) p.queue.splice(0, p.queue.length - 40); }
+}
+
+/* =====================================================================================
    Start
    ===================================================================================== */
-const user = { name: null };
+const user = { name: null, first: null, email: null, avatar: null, color: PEER_COLORS[0] };
 setView({ x: 0, y: 0, k: 1 });
 
 (async () => {
@@ -2125,6 +2510,10 @@ setView({ x: 0, y: 0, k: 1 });
     await auth.loadPermissions();
     user.name = auth.getFullName() || auth.getFirstName() || null;
     const first = auth.getFirstName();
+    user.first = first;
+    user.email = auth.getEmail();
+    user.avatar = auth.getAvatarSm();
+    user.color = hashColor(user.email || TAB);
     if (first) { $('#userName').textContent = first; $('#user').hidden = false; }
     const avatar = auth.getAvatarSm();
     if (avatar) { const img = $('#avatar'); img.onload = () => { img.hidden = false; $('#user').hidden = false; }; img.src = avatar; }
@@ -2134,6 +2523,7 @@ setView({ x: 0, y: 0, k: 1 });
   if (store.mode === 'local') banner('Local preview: the platform isn’t available here, so changes are saved in this browser only. Deploy to bp-vibes to share the map with the team.');
   renderSaveState();
   if (await load()) fitAll(false);
+  startPresence();
 })();
 </script>
 </body>

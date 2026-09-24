@@ -12,6 +12,25 @@ them. It's built as a [bp-vibes](CLAUDE.md) app: a single `index.html` with no b
 
 Every edit saves automatically and is shared with anyone signed in at BibleProject.
 
+## Live together
+
+When teammates have the map open at the same time:
+
+- **Who's here** — their avatars sit in the top bar. Hover for what they're looking at; click to
+  jump to it.
+- **Cursors** — everyone's pointer is drawn on the map with their name, pinned to map positions
+  so it lines up whatever your own zoom. Cursors trail about a second behind.
+- **What they have open** — a ring in their colour around the system or connection they're
+  viewing. In the side panel: "Jordan is here too" / "Jordan is editing step 3", with that step
+  outlined in their colour.
+- **Edits appear live** — within a second or two, with a brief highlight on what changed.
+
+How it works: the platform has no live channel, so each open tab keeps one small record in the
+`presence` collection (cursor trail, what's open, a counter that ticks when they save) and every
+tab reads the collection once a second. A tab only writes about once a second while its cursor
+moves *and* someone else is watching, every 15 seconds otherwise, and not at all when hidden.
+Someone disappears when they close the tab, or 40 seconds after their tab goes quiet.
+
 ## Using it
 
 | To… | Do this |
@@ -38,8 +57,9 @@ Three collections, all declared in `vibes.json`:
 | `systems` | piece of software / spreadsheet | name, category, description, owner, link, map position |
 | `flows` | connection between two systems | `refs.from` / `refs.to` → `systems/<key>`; kind, name, description, frequency, owner, ordered `steps` |
 | `meta` | — | `seeded` marker, so the starter map from the original runbook is written only once |
+| `presence` | open browser tab | cursor trail, what's open, what's being edited; ephemeral |
 
-All three are `"access": "shared"`, which means **anyone signed in at BibleProject** can read and
+All four are `"access": "shared"`, which means **anyone signed in at BibleProject** can read and
 edit the map. To limit it to the finance team, change each to `"group:<finance group name>"` in
 `vibes.json` and redeploy.
 
