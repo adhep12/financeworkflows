@@ -564,12 +564,16 @@ function stageSize() {
   const r = svg.getBoundingClientRect();
   return { w: r.width, h: r.height, left: r.left, top: r.top };
 }
+/* The part of the canvas nothing sits on top of: below the "How data moves" bar, above the
+   zoom controls, and left of the side panel when it's open. */
 function visibleArea() {
-  const { w, h } = stageSize();
+  const { w, h, top } = stageSize();
+  const bar = $('#methodBar')?.getBoundingClientRect();
+  const y = bar && bar.height ? Math.max(0, bar.bottom - top + 8) : 0;
+  const bottom = 56;
   const open = $('#drawer').classList.contains('open');
-  if (!open) return { x: 0, y: 0, w, h };
-  if (matchMedia('(max-width: 760px)').matches) return { x: 0, y: 0, w, h: h * 0.32 };
-  return { x: 0, y: 0, w: Math.max(200, w - 440), h };
+  if (open && matchMedia('(max-width: 760px)').matches) return { x: 0, y, w, h: Math.max(120, h * 0.32 - y) };
+  return { x: 0, y, w: open ? Math.max(200, w - 440) : w, h: Math.max(120, h - y - bottom) };
 }
 const toWorld = (sx, sy) => ({ x: (sx - view.x) / view.k, y: (sy - view.y) / view.k });
 
@@ -613,6 +617,17 @@ function boundsOf(systems) {
   }
   return b;
 }
+/* Until someone moves the map themselves, keep the whole map fitted and centred. The page can
+   still be resizing when it first loads (it runs inside the platform's frame), so fitting just
+   once at load can leave it off-centre. */
+let userMovedMap = false;
+const markMoved = () => { userMovedMap = true; };
+['wheel', 'pointerdown'].forEach(t => svg.addEventListener(t, markMoved, { passive: true }));
+$('.zoombar')?.addEventListener('pointerdown', markMoved);
+addEventListener('keydown', (e) => { if ('+=-_'.includes(e.key) && e.key) markMoved(); });
+new ResizeObserver(() => {
+  if (!userMovedMap && !sel && state.systems.size && svg.getBoundingClientRect().width) fitAll(false);
+}).observe(svg);
 function fitAll(animate = true) {
   const b = boundsOf([...state.systems.values()]);
   if (!b) { const { w, h } = stageSize(); setView({ x: w / 2, y: h / 2, k: 1 }); return; }
@@ -2062,6 +2077,6 @@ setView({ x: 0, y: 0, k: 1 });
   if (store.mode === 'local') banner('Local preview: the platform isn’t available here, so changes are saved in this browser only. Deploy to bp-vibes to share the map with the team.');
   renderSaveState();
   const loaded = await load();
-  if (loaded) fitAll(false);
+  if (loaded) requestAnimationFrame(() => fitAll(false));   // after layout, so the size is right
   startPresence();
 })();
