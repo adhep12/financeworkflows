@@ -801,9 +801,25 @@
   }
   .cursor.hide { opacity: 0; }
 
-  .peer-ring { fill: none; stroke-width: 2.5; pointer-events: none; }
-  .peer-tag { pointer-events: none; }
-  .peer-tag text { fill: #fff; font-size: 11px; font-weight: 600; }
+  .peer-ring { fill: none; stroke-width: 3; pointer-events: none; }
+  .peer-badge { pointer-events: none; }
+  .peer-badge circle { stroke: var(--panel); stroke-width: 2; }
+  .peer-badge text { fill: #fff; font-size: 9.5px; font-weight: 700; }
+  .peer-tip {
+    position: fixed; z-index: 60; pointer-events: none; max-width: 280px;
+    background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 500;
+    padding: 6px 9px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.2);
+  }
+  .peer-tip div { display: flex; align-items: center; gap: 7px; }
+  .peer-tip div + div { margin-top: 3px; }
+  .peer-tip i { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .tl-card { position: relative; }
+  .tl-step.peer-viewing .tl-card { box-shadow: 0 0 0 2px var(--peer); }
+  .tl-looks { position: absolute; top: -8px; right: 8px; display: flex; gap: 3px; pointer-events: none; }
+  .tl-looks b {
+    min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; border: 2px solid var(--panel);
+    color: #fff; font-size: 9px; font-weight: 700; display: grid; place-items: center; box-sizing: content-box;
+  }
 
   .here { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
   .here-chip {

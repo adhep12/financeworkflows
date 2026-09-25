@@ -685,10 +685,11 @@ function fitAll(animate = true) {
    past the point where everything fits, so a small map never shrinks to a speck. */
 function zoomLimits() {
   const b = boundsOf([...state.systems.values()]);
-  if (!b) return { min: 0.5, max: K_MAX };
+  if (!b) return { min: 0.25, max: K_MAX };
   const { w, h } = stageSize();
   const fit = Math.min((w - 40) / (b.x2 - b.x1), (h - 40) / (b.y2 - b.y1));
-  return { min: clamp(fit * 0.8, 0.08, 0.9), max: K_MAX };
+  // Always at least down to 25%, and further for a map big enough that 25% doesn't fit it.
+  return { min: clamp(fit * 0.6, 0.08, 0.25), max: K_MAX };
 }
 
 /* Keep at least a corner of the map on screen, so you can't pan off into empty space. */
@@ -1105,7 +1106,7 @@ function select(type, id, { focus = true, step = null } = {}) {
   sel = { type, id };
   hover = null;
   applyHighlight();
-  if (!same) { renderDrawer(); drScroll.scrollTop = 0; }
+  if (!same) { me.step = null; renderDrawer(); drScroll.scrollTop = 0; }
   drawer.classList.add('open');
   stage.classList.add('drawer-open');
   if (focus) focusSelection();
@@ -1131,6 +1132,8 @@ function closeDrawer() {
   flushDebounced();
   sel = null;
   me.editing = null;
+  me.step = null;
+  hidePeerTip();
   schedulePush(true);
   drawer.classList.remove('open');
   stage.classList.remove('drawer-open');
@@ -1312,7 +1315,20 @@ drawer.addEventListener('focusin', (e) => {
   const field = el.dataset?.sfield || el.dataset?.field;
   if (!field) return;
   me.editing = sid ? { sid, field } : { field };
+  if (sid) me.step = sid;
   schedulePush(true);
+});
+/* The step someone is pointing at or working in is what they're "looking at" — others see it
+   outlined in that person's colour. Hovering only batches with the cursor updates. */
+drScroll.addEventListener('pointerover', (e) => {
+  const sid = e.target.closest?.('.tl-step')?.dataset.sid;
+  if (!sid || sid === me.step) return;
+  me.step = sid;
+  schedulePush(false);
+});
+drScroll.addEventListener('pointerdown', (e) => {
+  const sid = e.target.closest?.('.tl-step')?.dataset.sid;
+  if (sid && sid !== me.step) { me.step = sid; schedulePush(true); }
 });
 drawer.addEventListener('focusout', (e) => {
   if (!drawer.contains(e.relatedTarget)) {
@@ -1738,7 +1754,7 @@ const safeColor = (c, fallback) => /^#[0-9a-f]{6}$/i.test(c || '') ? c : fallbac
 const TAB = rid('tab');
 const SAMPLE_MS = 100, FLUSH_MS = 800, HEARTBEAT_MS = 15000, GONE_MS = 40000, TRAIL = 16;
 
-const me = { seq: 0, ci: 0, samples: [], cursor: null, lastSampled: null, rev: 0, editing: null, writing: false, dirty: false, lastWrite: 0 };
+const me = { seq: 0, ci: 0, samples: [], cursor: null, lastSampled: null, rev: 0, editing: null, step: null, writing: false, dirty: false, lastWrite: 0 };
 const peers = new Map();
 const diag = { pollOk: 0, pollErr: '', writeOk: 0, writeErr: '', records: 0 };
 
@@ -1767,7 +1783,7 @@ function presenceRecord() {
     name: user.name || 'Someone', first: user.first || '', email: user.email || '', avatar: user.avatar || '',
     color: user.color, seq: ++me.seq, ts: Date.now(),
     cursor: !!me.cursor && !document.hidden, ci: me.ci, samples: me.samples.slice(-TRAIL),
-    sel: sel ? { type: sel.type, id: sel.id } : null, editing: me.editing, rev: me.rev, away: document.hidden,
+    sel: sel ? { type: sel.type, id: sel.id } : null, editing: me.editing, step: sel ? me.step : null, rev: me.rev, away: document.hidden,
     route: location.hash || '#/map',
   } };
 }
@@ -1865,6 +1881,7 @@ function ingestPresence(list) {
       color: safeColor(d.color, hashColor(d.email || r.key)),
       sel: d.sel && typeof d.sel.id === 'string' && (d.sel.type === 'system' || d.sel.type === 'flow') ? d.sel : null,
       editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
+      step: typeof d.step === 'string' ? d.step.slice(0, 64) : null,
       route: typeof d.route === 'string' ? d.route.slice(0, 200) : '',
       away: !!d.away, self,
     });
@@ -1934,13 +1951,33 @@ $('#peers').addEventListener('click', (e) => {
   } else toast(`${p.first || p.name} is ${whereIs(p)}.`);
 });
 
-/* Coloured rings and name tags on whatever each person has open. */
+/* Who has something open on the map right now: other people, plus your own other windows so
+   you can see it working on your own. */
+function lookers() {
+  return [...activePeople(), ...activePeers().filter(p => p.self)]
+    .filter(p => p.sel && !p.away && (!p.route || p.route.startsWith('#/map')));
+}
+const lookerName = (p) => p.self ? 'You (other window)' : p.name;
+const lookerShort = (p) => p.self ? 'You' : (p.first || p.name);
+function stepNo(flowId, sid) {
+  const i = state.flows.get(flowId)?.steps.findIndex(s => s.id === sid) ?? -1;
+  return i >= 0 ? i + 1 : null;
+}
+/* "Jordan is looking at step 3" — what shows when you hover what they have open. */
+function lookerLine(p) {
+  const n = p.sel?.type === 'flow' ? stepNo(p.sel.id, p.editing?.sid || p.step) : null;
+  if (p.editing && n) return `${lookerName(p)} is editing step ${n}`;
+  if (p.editing) return `${lookerName(p)} is editing this`;
+  if (n) return `${lookerName(p)} is looking at step ${n}`;
+  return `${lookerName(p)} has this open`;
+}
+
+/* A box in their colour around whatever each person has open, with their initials on it. */
 function renderPeerMarks() {
   const g = $('#peerMarks');
   if (!g) return;
   const groups = new Map();
-  for (const p of activePeople()) {
-    if (!p.sel || p.away || (p.route && !p.route.startsWith('#/map'))) continue;
+  for (const p of lookers()) {
     const k = `${p.sel.type}/${p.sel.id}`;
     (groups.get(k) || groups.set(k, []).get(k)).push(p);
   }
@@ -1956,40 +1993,73 @@ function renderPeerMarks() {
       box = { x: eg.mid.x - eg.labelW / 2, y: eg.mid.y - 12, w: eg.labelW, h: 24, r: 12 };
     }
     ps.forEach((p, i) => {
-      const pad = 5 + i * 4;
-      out += `<rect class="peer-ring" x="${box.x - pad}" y="${box.y - pad}" width="${box.w + pad * 2}" height="${box.h + pad * 2}" rx="${box.r + pad}" stroke="${p.color}"/>`;
+      const pad = 5 + i * 5;
+      out += `<rect class="peer-ring" x="${box.x - pad}" y="${box.y - pad}" width="${box.w + pad * 2}" height="${box.h + pad * 2}" rx="${box.r + pad}" stroke="${p.color}"${i === 0 ? ` fill="${p.color}" fill-opacity=".08"` : ''}/>`;
     });
-    let tx = box.x - 5;
-    const ty = box.y - 9 - (ps.length - 1) * 4 - 18;
-    for (const p of ps) {
-      const name = p.first || p.name;
-      const w = Math.ceil(textWidth(name, `600 11px ${FONT}`)) + 14;
-      out += `<g class="peer-tag" transform="translate(${tx},${ty})"><rect width="${w}" height="18" rx="5" fill="${p.color}"/><text x="7" y="12.5">${esc(name)}</text></g>`;
-      tx += w + 4;
-    }
+    // Initials badges along the top-right corner; the full names show on hover.
+    const pad = 5 + (ps.length - 1) * 5;
+    ps.forEach((p, i) => {
+      const cx = box.x + box.w + pad - 4 - i * 17, cy = box.y - pad;
+      out += `<g class="peer-badge" transform="translate(${cx},${cy})"><circle r="10" fill="${p.color}"/><text text-anchor="middle" y="3.8">${esc(p.self ? 'Me' : initials(p.name))}</text></g>`;
+    });
   }
   g.innerHTML = out;
 }
 
-/* "Jordan is here too" in the panel, and a highlight on the step they're typing in. */
+/* Hover tooltip naming who has the thing under your pointer open. */
+const peerTip = document.createElement('div');
+peerTip.className = 'peer-tip';
+peerTip.hidden = true;
+document.body.append(peerTip);
+function showPeerTip(ps, e) {
+  if (!ps.length) return hidePeerTip();
+  peerTip.innerHTML = ps.map(p => `<div><i style="background:${p.color}"></i>${esc(lookerLine(p))}</div>`).join('');
+  peerTip.hidden = false;
+  const r = peerTip.getBoundingClientRect();
+  peerTip.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + 'px';
+  peerTip.style.top = Math.min(e.clientY + 18, innerHeight - r.height - 8) + 'px';
+}
+function hidePeerTip() { peerTip.hidden = true; }
+svg.addEventListener('pointermove', (e) => {
+  if (drag) return hidePeerTip();
+  const nodeEl = e.target.closest?.('.node'), edgeEl = e.target.closest?.('[data-edge]');
+  const t = nodeEl ? { type: 'system', id: nodeEl.dataset.node } : edgeEl ? { type: 'flow', id: edgeEl.dataset.edge } : null;
+  showPeerTip(t ? lookers().filter(p => p.sel.type === t.type && p.sel.id === t.id) : [], e);
+});
+svg.addEventListener('pointerleave', hidePeerTip);
+drScroll.addEventListener('pointermove', (e) => {
+  const sid = e.target.closest?.('.tl-step')?.dataset.sid;
+  showPeerTip(sid && sel ? drawerLookers().filter(p => (p.editing?.sid || p.step) === sid) : [], e);
+});
+drScroll.addEventListener('pointerleave', hidePeerTip);
+
+const drawerLookers = () => sel ? lookers().filter(p => p.sel.type === sel.type && p.sel.id === sel.id) : [];
+
+/* "Jordan is here too" in the panel, and each person's colour on the step they're looking at. */
 function renderDrawerPresence() {
   const here = $('#drHere');
   if (!here || !sel) return;
-  const ps = activePeople().filter(p => !p.away && p.sel?.type === sel.type && p.sel?.id === sel.id);
+  const ps = drawerLookers();
   const f = sel.type === 'flow' ? state.flows.get(sel.id) : null;
   here.innerHTML = ps.map(p => {
-    let what = ' is here too';
-    if (p.editing?.sid && f) { const i = f.steps.findIndex(s => s.id === p.editing.sid); if (i >= 0) what = ` is editing step ${i + 1}`; }
-    else if (p.editing) what = ' is editing';
-    return `<span class="here-chip" style="--pc:${p.color}"><i></i>${esc(p.first || p.name)}${what}</span>`;
+    const n = f ? stepNo(sel.id, p.editing?.sid || p.step) : null;
+    const what = p.editing && n ? ` is editing step ${n}` : p.editing ? ' is editing' : n ? ` is looking at step ${n}` : ' is here too';
+    return `<span class="here-chip" style="--pc:${p.color}"><i></i>${esc(lookerShort(p))}${what}</span>`;
   }).join('');
   here.hidden = !ps.length;
   for (const li of $$('.tl-step', drScroll)) {
-    const ed = ps.find(p => p.editing?.sid === li.dataset.sid);
+    const sid = li.dataset.sid;
+    const ed = ps.find(p => p.editing?.sid === sid);
+    const on = ps.filter(p => (p.editing?.sid || p.step) === sid);
     li.classList.toggle('peer-editing', !!ed);
-    if (ed) li.style.setProperty('--peer', ed.color); else li.style.removeProperty('--peer');
+    li.classList.toggle('peer-viewing', !ed && on.length > 0);
+    if (on.length) li.style.setProperty('--peer', (ed || on[0]).color); else li.style.removeProperty('--peer');
     const tag = $('.tl-peer', li);
-    if (tag) tag.textContent = ed ? `${ed.first || ed.name} is editing this step` : '';
+    if (tag) tag.textContent = ed ? `${lookerShort(ed)} ${ed.self ? 'are' : 'is'} editing this step` : '';
+    const card = $('.tl-card', li);
+    let badges = $('.tl-looks', li);
+    if (!badges && card && on.length) { badges = document.createElement('span'); badges.className = 'tl-looks'; card.append(badges); }
+    if (badges) badges.innerHTML = on.map(p => `<b style="background:${p.color}">${esc(p.self ? 'Me' : initials(p.name))}</b>`).join('');
   }
 }
 
