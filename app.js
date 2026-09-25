@@ -1,10 +1,8 @@
-import { createHub } from './hub.js';
 
 /* =====================================================================================
    Constants
    ===================================================================================== */
 // Always admins, so the app can never lock everyone out of Settings. Add more admins in the app.
-const BOOTSTRAP_ADMINS = ['alex.hepburn@bibleproject.com'];
 const NODE_W = 212, NODE_H = 68;
 const FONT = getComputedStyle(document.body).fontFamily;
 
@@ -115,21 +113,6 @@ const methodOf = (f) => METHODS[f?.method] || METHOD_UNSET;
 const methodIcon = (m, size = 14, stroke = 'currentColor') => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${m.icon}"/></svg>`;
 // Every flow in the original runbook is a file export + import.
 const SEED_METHOD = { 'flow-bill-acumatica': 'import', 'flow-plane-acumatica': 'import', 'flow-budgyt-tapestry': 'import', 'flow-acumatica-tapestry': 'import' };
-
-const SEED_FUNCTIONS = [
-  { key: 'fn-ap',       name: 'Accounts payable',       color: '#C0632A', order: 1 },
-  { key: 'fn-gl',       name: 'General ledger & close', color: '#3569B0', order: 2 },
-  { key: 'fn-payroll',  name: 'Payroll & contractors',  color: '#7B55B5', order: 3 },
-  { key: 'fn-fpa',      name: 'Budget & FP&A',          color: '#12876A', order: 4 },
-  { key: 'fn-treasury', name: 'Treasury & banking',     color: '#8C7A14', order: 5 },
-  { key: 'fn-grants',   name: 'Grants & reporting',     color: '#C2417A', order: 6 },
-];
-const SEED_PROCESSES = [
-  { key: 'proc-cc-jes', name: 'Credit card transactions → journal entries', functionId: 'fn-ap', flowId: 'flow-bill-acumatica', frequency: 'Monthly', description: 'Credit card transactions mapped and posted as journal entries.' },
-  { key: 'proc-contractor-ap', name: 'Contractor payroll → AP', functionId: 'fn-payroll', flowId: 'flow-plane-acumatica', frequency: '', description: 'Contractor payroll cross-referenced against timesheets and posted via an existing AP Import Scenario.' },
-  { key: 'proc-budget-tapestry', name: 'Budget → Tapestry', functionId: 'fn-fpa', flowId: 'flow-budgyt-tapestry', frequency: '', description: 'Budget data pushed into Tapestry Vibes for business reviews.' },
-  { key: 'proc-gl-tapestry', name: 'GL actuals → Tapestry', functionId: 'fn-fpa', flowId: 'flow-acumatica-tapestry', frequency: 'Monthly', description: 'Acumatica actuals pushed into Tapestry Vibes for business reviews.' },
-];
 
 /* =====================================================================================
    Small helpers
@@ -290,11 +273,9 @@ const store = {
 };
 
 /* ---- Entities <-> records ----
-   Map collections: systems, flows. Hub collections: people (one per person who has opened the
-   app), access (what each person may see), functions, roles, processes. meta holds seed markers
-   and the app-wide settings record. */
+   Map collections: systems, flows. meta holds the seed marker. */
 const MAP_COLLS = ['systems', 'flows'];
-const HUB_COLLS = ['people', 'access', 'functions', 'roles', 'processes', 'meta'];
+const HUB_COLLS = ['meta'];
 const ALL_COLLS = [...MAP_COLLS, ...HUB_COLLS];
 const state = Object.fromEntries(ALL_COLLS.map(c => [c, new Map()]));
 const collOf = (type) => type === 'system' ? 'systems' : 'flows';
@@ -303,23 +284,7 @@ const refKey = (ref) => typeof ref === 'string' ? ref.split('/').pop() : null;
 const arr = (v) => Array.isArray(v) ? v : [];
 const str = (v) => typeof v === 'string' ? v : '';
 
-/* Every hub record gets the same shape back whatever an older or newer version saved. */
-function normalize(coll, d) {
-  const base = { updatedAt: d.updatedAt || 0, updatedBy: str(d.updatedBy) };
-  switch (coll) {
-    case 'people': return { ...base, email: str(d.email).toLowerCase(), name: str(d.name) || str(d.email), first: str(d.first), avatar: str(d.avatar), dept: str(d.dept), firstSeen: d.firstSeen || 0, lastSeen: d.lastSeen || 0, home: str(d.home), added: !!d.added };
-    case 'access': return { ...base, email: str(d.email).toLowerCase(), admin: !!d.admin, pages: { myrole: !!d.pages?.myrole, team: !!d.pages?.team }, functions: arr(d.functions).filter(x => typeof x === 'string'), processes: arr(d.processes).filter(x => typeof x === 'string') };
-    case 'functions': return { ...base, name: str(d.name) || 'Untitled', color: /^#[0-9a-f]{6}$/i.test(d.color || '') ? d.color : '#6E7681', order: Number.isFinite(d.order) ? d.order : 0 };
-    case 'roles': return { ...base, title: str(d.title), holder: str(d.holder).toLowerCase(), purpose: str(d.purpose), duties: arr(d.duties).map(str), decides: arr(d.decides).map(str), reportsTo: str(d.reportsTo), backup: str(d.backup).toLowerCase(), systems: str(d.systems) };
-    case 'processes': return {
-      ...base, name: str(d.name) || 'Untitled process', functionId: str(d.functionId), flowId: str(d.flowId),
-      owner: str(d.owner).toLowerCase(), backup: str(d.backup).toLowerCase(), signoff: str(d.signoff).toLowerCase(),
-      frequency: str(d.frequency), when: str(d.when), duration: str(d.duration), description: str(d.description),
-      steps: arr(d.steps).map(s => ({ id: str(s?.id) || rid('st'), kind: str(s?.kind) || 'other', text: str(s?.text), tool: str(s?.tool), who: str(s?.who).toLowerCase(), minutes: Number.isFinite(s?.minutes) ? s.minutes : null, checklist: arr(s?.checklist).map(c => ({ id: str(c?.id) || rid('ck'), text: str(c?.text) })) })),
-    };
-    default: return { ...d };
-  }
-}
+function normalize(coll, d) { return { ...d }; }
 
 function fromRecord(coll, r) {
   const d = r?.data || {};
@@ -414,7 +379,6 @@ async function runQueue(q) {
         mapOf(q.coll).set(q.key, merged);
         renderCanvas();
         if (!drawerHasFocus()) renderDrawer();
-        if (!MAP_COLLS.includes(q.coll)) hubRefresh();
         try { await store.put(q.coll, q.key, toRecord(q.coll, merged)); }
         catch (err2) { q.mutates.unshift(...batch); throw err2; }
         toast('Merged your edit with a change a teammate just made.');
@@ -472,8 +436,7 @@ async function fetchAll() {
 }
 
 async function seedIfNeeded(data) {
-  const hub = await seedHubIfNeeded(data);
-  if (data.systems.length || data.flows.length) return hub;
+  if (data.systems.length || data.flows.length) return false;
   let marker = null;
   try { marker = await store.get('meta', 'seeded'); } catch { }
   if (marker) return false;
@@ -492,30 +455,6 @@ async function seedIfNeeded(data) {
     await store.put('meta', 'seeded', { data: { at: now, by: who } });
   } catch (err) {
     if (!err?.conflict) throw err; // a teammate seeded at the same moment — fine, just load theirs
-  }
-  await seedHubIfNeeded({ ...data, flows: SEED_FLOWS.map(f => ({ key: f.key })) }, true);
-  return true;
-}
-
-/* The hub starts with Finance's functions and one process per runbook flow, its steps copied
-   from the flow so there's something real to assign people to. Written once. */
-async function seedHubIfNeeded(data, force) {
-  if (data.functions.length || data.meta.some(r => r.key === 'seeded-hub')) return false;
-  const who = user.name || '', now = Date.now();
-  try {
-    for (const f of SEED_FUNCTIONS) await store.put('functions', f.key, { data: { name: f.name, color: f.color, order: f.order, updatedAt: now, updatedBy: who } });
-    const flowKeys = new Set(data.flows.map(r => r.key));
-    for (const p of SEED_PROCESSES) {
-      if (!force && !flowKeys.has(p.flowId)) continue;
-      const flow = data.flows.find(r => r.key === p.flowId);
-      const src = SEED_FLOWS.find(f => f.key === p.flowId);
-      const steps = arr(flow?.data?.steps).length ? flow.data.steps : (src?.steps || []);
-      await store.put('processes', p.key, { data: { ...p, key: undefined, owner: '', backup: '', signoff: '', when: '', duration: '', updatedAt: now, updatedBy: who,
-        steps: steps.map(s => ({ id: rid('st'), kind: s.kind || 'other', text: s.text || '', tool: s.tool || '', who: '', minutes: null, checklist: [] })) } });
-    }
-    await store.put('meta', 'seeded-hub', { data: { at: now, by: who } });
-  } catch (err) {
-    if (!err?.conflict) throw err;
   }
   return true;
 }
@@ -588,7 +527,6 @@ async function reload() {
     if (!changed.length && !removed.length) return;
     if (sel && !mapOf(collOf(sel.type)).has(sel.id)) { closeDrawer(); toast('A teammate just deleted what you had open.'); }
     renderCanvas();
-    applyAccessToChrome();
     for (const k of changed) {
       const [coll, id] = [k.slice(0, k.indexOf('/')), k.slice(k.indexOf('/') + 1)];
       const els = coll === 'systems' ? $$(`.node[data-node="${CSS.escape(id)}"]`) : coll === 'flows' ? $$(`[data-edge="${CSS.escape(id)}"]`) : [];
@@ -597,7 +535,6 @@ async function reload() {
     if (sel) {
       if (drawerHasFocus()) drawerStale = true; else renderDrawer();
     }
-    if ([...changed, ...removed].some(k => !k.startsWith('systems/') && !k.startsWith('flows/'))) hubRefresh();
   } catch { /* offline — keep what's on screen */ }
 }
 addEventListener('focus', () => { if (Date.now() - lastRefresh > 15000) reload(); });
@@ -1256,7 +1193,6 @@ function renderFlowDrawer(f) {
     </div>
     <label class="fld"><span>${isFlow ? 'What moves, and why' : 'What gets compared, and why'}</span>
       <textarea data-field="description" rows="2" placeholder="${isFlow ? 'e.g. Credit card transactions mapped and posted as journal entries' : 'e.g. Bank balance tied out to the GL cash account'}">${esc(f.description)}</textarea></label>
-    ${hubFlowCard(f)}
     <div class="fld-row">
       <label class="fld"><span>How often</span><select data-field="frequency">
         ${FREQUENCIES.map(q => `<option value="${esc(q)}" ${q === f.frequency ? 'selected' : ''}>${q || 'Not set'}</option>`).join('')}
@@ -1361,8 +1297,6 @@ drawer.addEventListener('click', async (e) => {
     case 'connect': newConnection({ from: key }); break;
     case 'swap': edit('flows', key, (x) => { [x.from, x.to] = [x.to, x.from]; }); renderDrawer(); break;
     case 'method': { const m = btn.dataset.m; edit('flows', key, (x) => { x.method = x.method === m ? '' : m; }); renderDrawer(); break; }
-    case 'open-process': go(`#/process/${btn.dataset.id}`); break;
-    case 'create-process': hubCreateProcessForFlow(key); break;
     case 'step-add': addStep(null); break;
     case 'step-up':
     case 'step-down': {
@@ -1677,7 +1611,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing || dialogOpen() || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (document.body.dataset.route === 'hub') return;   // map shortcuts only on the map
   if (e.key === '/') { e.preventDefault(); searchInput.focus(); }
   else if (e.key === 'f' || e.key === 'F') fitAll();
   else if (e.key === '+' || e.key === '=') zoomAnimated(1.25);
@@ -1784,7 +1717,6 @@ function presenceRecord() {
     color: user.color, seq: ++me.seq, ts: Date.now(),
     cursor: !!me.cursor && !document.hidden, ci: me.ci, samples: me.samples.slice(-TRAIL),
     sel: sel ? { type: sel.type, id: sel.id } : null, editing: me.editing, step: sel ? me.step : null, rev: me.rev, away: document.hidden,
-    route: location.hash || '#/map',
   } };
 }
 
@@ -1882,7 +1814,6 @@ function ingestPresence(list) {
       sel: d.sel && typeof d.sel.id === 'string' && (d.sel.type === 'system' || d.sel.type === 'flow') ? d.sel : null,
       editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
       step: typeof d.step === 'string' ? d.step.slice(0, 64) : null,
-      route: typeof d.route === 'string' ? d.route.slice(0, 200) : '',
       away: !!d.away, self,
     });
   }
@@ -1920,7 +1851,6 @@ addEventListener('pagehide', () => { if (presenceOn) store.rec.remove('presence'
 /* ---- Showing them ---- */
 function whereIs(p) {
   if (p.away) return 'away from the map';
-  if (p.route && !p.route.startsWith('#/map') && hub) return hub.describeRoute(p.route);
   if (!p.sel) return 'looking around the map';
   if (p.sel.type === 'system') return `viewing ${sysOf(p.sel.id)?.name || 'a system'}`;
   const f = state.flows.get(p.sel.id);
@@ -1943,8 +1873,7 @@ function renderPresence() {
 $('#peers').addEventListener('click', (e) => {
   const p = peers.get(e.target.closest('[data-peer]')?.dataset.peer);
   if (!p) return;
-  if (p.route && !p.route.startsWith('#/map') && hub?.canOpenRoute(p.route)) go(p.route);
-  else if (p.sel && mapOf(collOf(p.sel.type)).has(p.sel.id)) { go('#/map'); select(p.sel.type, p.sel.id); }
+  if (p.sel && mapOf(collOf(p.sel.type)).has(p.sel.id)) select(p.sel.type, p.sel.id);
   else if (p.pos) {
     const a = visibleArea();
     animateTo({ x: a.x + a.w / 2 - p.pos.x * view.k, y: a.y + a.h / 2 - p.pos.y * view.k, k: view.k });
@@ -1955,7 +1884,7 @@ $('#peers').addEventListener('click', (e) => {
    you can see it working on your own. */
 function lookers() {
   return [...activePeople(), ...activePeers().filter(p => p.self)]
-    .filter(p => p.sel && !p.away && (!p.route || p.route.startsWith('#/map')));
+    .filter(p => p.sel && !p.away);
 }
 const lookerName = (p) => p.self ? 'You (other window)' : p.name;
 const lookerShort = (p) => p.self ? 'You' : (p.first || p.name);
@@ -2112,18 +2041,6 @@ function advanceCursor(p, now) {
 const user = { name: null, first: null, email: null, avatar: null, dept: null, color: PEER_COLORS[0] };
 setView({ x: 0, y: 0, k: 1 });
 
-/* ---- The hub (My role, Team, Processes, Settings) lives in hub.js ---- */
-let hub = null;
-function hubRefresh() { hub?.refresh(); }
-function hubFlowCard(f) { return hub ? hub.flowCard(f) : ''; }
-function hubCreateProcessForFlow(key) { hub?.createProcessForFlow(key); }
-function applyAccessToChrome() { hub?.applyChrome(); }
-function go(hash) { if (location.hash === hash) hub?.route(); else location.hash = hash; }
-function showFlowOnMap(flowId) {
-  go('#/map');
-  setTimeout(() => { if (state.flows.has(flowId)) select('flow', flowId); }, 30);
-}
-
 (async () => {
   // Who's here — used for "Edited by". The page works fine without it.
   try {
@@ -2134,7 +2051,6 @@ function showFlowOnMap(flowId) {
     user.first = first;
     user.email = auth.getEmail();
     user.avatar = auth.getAvatarSm();
-    user.dept = auth.getDepartment?.() || null;
     user.email = user.email ? String(user.email).toLowerCase() : null;
     user.color = hashColor(user.email || TAB);
     if (first) { $('#userName').textContent = first; $('#user').hidden = false; }
@@ -2146,12 +2062,6 @@ function showFlowOnMap(flowId) {
   if (store.mode === 'local') banner('Local preview: the platform isn’t available here, so changes are saved in this browser only. Deploy to bp-vibes to share the map with the team.');
   renderSaveState();
   const loaded = await load();
-  hub = createHub({
-    state, store, user, BOOTSTRAP_ADMINS, METHODS, methodOf, methodIcon, CATEGORIES, catOf, sysOf, STEP_KINDS, kindOfStep, FREQUENCIES,
-    esc, $, $$, rid, clone, initials, ago, hashColor, toast, openDialog, confirmDialog,
-    edit, createEntity, deleteEntity, flushDebounced, go, showFlowOnMap, closeDrawer, renderDrawer, schedulePush: (u) => schedulePush(u),
-  });
-  if (loaded) { fitAll(false); hub.upsertMe(); }
-  hub.start();
+  if (loaded) fitAll(false);
   startPresence();
 })();
