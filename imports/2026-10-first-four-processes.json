@@ -11,13 +11,15 @@
     "Cass",
     "Cass online banking"
    ],
-   "description": "Operating account, incoming wires (EFT gifts) and remote check deposit (Cass Deposit)."
+   "description": "Operating account, incoming wires (EFT gifts) and remote check deposit (Cass Deposit).",
+   "tier": "core"
   },
   {
    "key": "sys-banks",
    "name": "Other bank & investment accounts",
    "category": "banking",
-   "description": "KeyBank Money Market and Checking, Stripe, PayPal, Wise, Fidelity – Delap Wealth Advisory, Invest – Tschetter Group."
+   "description": "KeyBank Money Market and Checking, Stripe, PayPal, Wise, Fidelity – Delap Wealth Advisory, Invest – Tschetter Group.",
+   "tier": "supporting"
   },
   {
    "key": "sys-salesforce",
@@ -27,13 +29,15 @@
     "Salesforce NPSP",
     "SF"
    ],
-   "description": "Donor records and gifts: Gift Entry batches (EFT, Misc, check deposits) and NPSP Data Imports."
+   "description": "Donor records and gifts: Gift Entry batches (EFT, Misc, check deposits) and NPSP Data Imports.",
+   "tier": "core"
   },
   {
    "key": "sys-gift-portals",
    "name": "DAF & giving portals",
    "category": "giving",
-   "description": "Where electronic gifts are disbursed from: Renaissance, Bonterra (Cybergrants), YourCause, Chariot, Benevity, FrontStream, NCF, Overflow, United Way and others. Logins in Bitwarden (Shared-Financial)."
+   "description": "Where electronic gifts are disbursed from: Renaissance, Bonterra (Cybergrants), YourCause, Chariot, Benevity, FrontStream, NCF, Overflow, United Way and others. Logins in Bitwarden (Shared-Financial).",
+   "tier": "supporting"
   },
   {
    "key": "sys-finance-inbox",
@@ -43,7 +47,8 @@
     "Finance Gmail",
     "Gmail"
    ],
-   "description": "Gift notification emails. Labels track each gift: Awaiting, Downloaded, Entered, Imported / To Be Imported."
+   "description": "Gift notification emails. Labels track each gift: Awaiting, Downloaded, Entered, Imported / To Be Imported.",
+   "tier": "supporting"
   },
   {
    "key": "sys-gdrive",
@@ -53,7 +58,8 @@
     "Google Sheets",
     "Shared Drive"
    ],
-   "description": "Gift support (Finance Documents → EFT), deposit notes and support, the Deposit Count sheet, and the NCF and Fidelity import templates."
+   "description": "Gift support (Finance Documents → EFT), deposit notes and support, the Deposit Count sheet, and the NCF and Fidelity import templates.",
+   "tier": "supporting"
   },
   {
    "key": "sys-mailroom",
@@ -62,25 +68,29 @@
    "match": [
     "Mailroom"
    ],
-   "description": "Checks and donor mail: the mailroom downstairs and PO Box 14278, Portland."
+   "description": "Checks and donor mail: the mailroom downstairs and PO Box 14278, Portland.",
+   "tier": "supporting"
   },
   {
    "key": "sys-patreon",
    "name": "Patreon",
    "category": "giving",
-   "description": "Gift disbursements, sent to Salesforce by API."
+   "description": "Gift disbursements, sent to Salesforce by API.",
+   "tier": "core"
   },
   {
    "key": "sys-looker",
    "name": "Looker",
    "category": "reporting",
-   "description": "Revenue reporting, checked against the P&L each month."
+   "description": "Revenue reporting, checked against the P&L each month.",
+   "tier": "core"
   },
   {
    "key": "sys-inventory",
    "name": "Inventory partners",
    "category": "other",
-   "description": "Renewal Logistics, Koorong and 10ofThose inventory reports."
+   "description": "Renewal Logistics, Koorong and 10ofThose inventory reports.",
+   "tier": "supporting"
   },
   {
    "key": "sys-fixed-assets",
@@ -89,13 +99,15 @@
    "match": [
     "Fixed Asset Listing.xlsx"
    ],
-   "description": "Fixed Asset Listing.xlsx: the fixed asset register and depreciation."
+   "description": "Fixed Asset Listing.xlsx: the fixed asset register and depreciation.",
+   "tier": "supporting"
   },
   {
    "key": "sys-payroll",
    "name": "Payroll register",
    "category": "payroll",
-   "description": "Final payroll register for each pay period end (the 15th and the last day of the month), including 401k."
+   "description": "Final payroll register for each pay period end (the 15th and the last day of the month), including 401k.",
+   "tier": "supporting"
   }
  ],
  "connections": [

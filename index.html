@@ -202,6 +202,17 @@
   .node:hover .node-card, .node:focus-visible .node-card { stroke: var(--ink-faint); }
   .node.sel .node-card { stroke: var(--focus); stroke-width: 2; }
   .node.drop .node-card { stroke: var(--edge-sync); stroke-width: 2.5; }
+  .node-more rect { fill: var(--muted-bg); stroke: var(--line-strong); }
+  .node-more text { fill: var(--ink-soft); font-size: 11px; font-weight: 600; }
+  .node.supporting .node-card { stroke-dasharray: 5 4; fill: var(--panel-2); }
+  .node.center .node-card { stroke: var(--accent); stroke-width: 2; }
+  .dr-heading { font-size: 17px; font-weight: 600; margin: 4px 0 4px; letter-spacing: -0.01em; }
+  .tier-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 12px; }
+  .tier-pick button { text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-soft); font-size: 12.5px; }
+  .tier-pick button b { display: block; font-weight: 600; color: var(--ink); font-size: 13px; }
+  .tier-pick button span { font-size: 11.5px; color: var(--ink-faint); }
+  .tier-pick button:hover { border-color: var(--line-strong); }
+  .tier-pick button.on { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); background: var(--panel); }
   .node.dragging { cursor: grabbing; }
   .node-ini { fill: #fff; font-size: 13px; font-weight: 700; text-anchor: middle; letter-spacing: .02em; }
   .node-name { fill: var(--ink); font-size: 14px; font-weight: 600; }
@@ -232,7 +243,18 @@
   .edge-label .pill { stroke-width: 1.3; }
   .edge-label text.edge-name { font-size: 11px; font-weight: 500; fill: var(--ink-faint); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; opacity: 0; transition: opacity .3s; }
   #canvas[data-zoom="near"] .edge-name, .edge-label.sel .edge-name, .edge-label:hover .edge-name { opacity: 1; }
-  .method-bar { position: absolute; left: 16px; top: 14px; z-index: 5; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: calc(100% - 32px);
+  .top-left { position: absolute; left: 16px; top: 14px; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: calc(100% - 32px); pointer-events: none; }
+  .top-left > * { pointer-events: auto; }
+  .stage.drawer-open .top-left { max-width: calc(100% - 472px); }
+  .crumbs { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-sm); font-size: 13px; max-width: 100%; }
+  .crumbs button { border: 0; background: none; border-radius: 8px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 7px; }
+  .crumbs button:hover { background: var(--panel-2); }
+  .cr-back { color: var(--focus); font-weight: 500; }
+  .cr-here { font-weight: 600; padding: 4px 8px; }
+  .cr-here .ini { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 9.5px; font-weight: 700; }
+  .cr-sep { color: var(--ink-faint); }
+  .cr-sub { color: var(--ink-faint); font-size: 12px; padding-right: 6px; white-space: nowrap; }
+  .method-bar { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: 100%;
     padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-sm); font-size: 12.5px; }
   .mb-lbl { padding: 0 6px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); }
   .mb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 4px; border: 1px solid transparent; border-radius: 9px; background: none; color: var(--ink-soft); font-size: 12.5px; }
@@ -240,7 +262,6 @@
   .mb-chip.on { border-color: var(--mc); background: color-mix(in srgb, var(--mc) 12%, var(--panel)); color: var(--ink); font-weight: 600; }
   .mb-chip.zero { opacity: .55; }
   .mb-chip .lm-count { margin-left: 2px; }
-  .stage.drawer-open .method-bar { max-width: calc(100% - 472px); }
   .legend-method { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 6px; margin: 0 -6px; border: 0; border-radius: 6px; background: none; color: var(--ink-soft); font: inherit; text-align: left; }
   .legend-method:hover { background: var(--panel-2); color: var(--ink); }
   .legend-method.on { background: var(--muted-bg); color: var(--ink); font-weight: 600; }
@@ -763,11 +784,14 @@
     <div class="cursors" id="cursors" aria-hidden="true"></div>
 
     <div class="hint" id="hint" hidden>
-      <span><b>Scroll</b> to zoom · <b>drag</b> to pan · <b>double-click</b> to add a system · drag a system's <b>●</b> to connect it</span>
+      <span><b>Click a system</b> to open its map · <b>scroll</b> to zoom · <b>drag</b> to pan · drag a system's <b>●</b> to connect it</span>
       <button id="hintClose" aria-label="Dismiss tip">✕</button>
     </div>
 
-    <div class="method-bar" id="methodBar" role="group" aria-label="How data moves — filter"></div>
+    <div class="top-left" id="topLeft">
+      <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
+      <div class="method-bar" id="methodBar" role="group" aria-label="How data moves — filter"></div>
+    </div>
 
     <details class="legend" id="legend">
       <summary>Legend</summary>

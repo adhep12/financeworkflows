@@ -5,12 +5,18 @@ step-by-step processes the team follows. It's a [bp-vibes](CLAUDE.md) app with n
 `index.html` (markup and styles), `app.js` (the map, processes, storage, presence) and `imports/`
 (process instructions that ship with the app).
 
-- **Zoom out** to see every system and how data moves between them.
+- **The main map** shows the core systems, the software the team runs, and how data moves
+  between them. Supporting pieces (inboxes, spreadsheets, giving portals, mail) are left off it;
+  a **+3** badge on a system says how many connect to it.
+- **Click a system** to open its own map: it in the middle, what feeds it on the left, what it
+  feeds on the right, what it reconciles or syncs with underneath, supporting pieces included.
+  Its panel lists its connections and the processes that use it. **← All systems** (or
+  <kbd>Esc</kbd>) goes back. Each system's panel has a **Core system / Supporting** switch.
+- Several connections between the same two systems are one line (“3 connections”); click it for
+  the list.
 - **Click a connection** to open its step-by-step process: source → steps → destination.
 - **Zoom in** on the map and each connection shows its steps as numbered dots, colour-coded by
   type. Click a dot to go straight to that step.
-- **Click a system** to see its owner, what it's used for, everything it sends, receives,
-  reconciles or syncs with, and the processes that use it.
 - **Processes** (top bar) is the register of every process the team runs, documented or not:
   status, owner, how often, systems, steps and a link to the source document. Filter it by area,
   owner, system or status. Open a process to read and edit its steps; the map lights up the
@@ -90,7 +96,7 @@ last checked for others, whether its own updates are going out, and who's here.
 | Pick the relationship | *Data flow* (one way), *Reconciles with* (compare/tie-out), *Two-way sync* |
 | Document a process | Open a connection → **Add a step**. Each step has a type (Export, Transform, Check, Import, Other) and an optional tool or file. <kbd>Ctrl/⌘</kbd>+<kbd>Enter</kbd> adds the next step. |
 | Reorder or remove steps | Hover a step → ↑ ↓ ✕ (deleting offers Undo) |
-| Move things around | Drag systems; **⋯ → Tidy layout** arranges them left → right by data flow (loops are fine, and it can be undone straight after) |
+| Move things around | Drag systems on the main map (a system's own map is laid out automatically); **⋯ → Tidy layout** arranges them left → right by data flow (loops are fine, and it can be undone straight after) |
 | Find anything | <kbd>/</kbd> searches systems, connections and step text |
 | Navigate | Scroll or pinch to zoom, drag to pan, <kbd>F</kbd> fits everything, <kbd>Esc</kbd> closes the panel |
 | Back up | **⋯ → Export as JSON** |

@@ -295,6 +295,7 @@ function fromRecord(coll, r) {
       key: r.key, name: d.name || 'Untitled', category: d.category || 'other',
       description: d.description || '', owner: d.owner || '', url: d.url || '',
       x: Number.isFinite(d.x) ? d.x : 0, y: Number.isFinite(d.y) ? d.y : 0,
+      tier: d.tier === 'core' || d.tier === 'supporting' ? d.tier : '',
       updatedAt: d.updatedAt || 0, updatedBy: d.updatedBy || '',
     };
   }
@@ -561,8 +562,9 @@ async function reload() {
     const changed = [...after].filter(([k, v]) => before.get(k) !== v).map(([k]) => k);
     const removed = [...before.keys()].filter(k => !after.has(k));
     if (!changed.length && !removed.length) return;
-    if (sel && !mapOf(collOf(sel.type)).has(sel.id)) { closeDrawer(); toast('A teammate just deleted what you had open.'); }
+    if (sel && sel.type !== 'pair' && !mapOf(collOf(sel.type)).has(sel.id)) { closeDrawer(); toast('A teammate just deleted what you had open.'); }
     renderCanvas();
+    if (sel?.type === 'pair' && !vm.bundles.has(sel.id)) closeDrawer();
     for (const k of changed) {
       const [coll, id] = [k.slice(0, k.indexOf('/')), k.slice(k.indexOf('/') + 1)];
       const els = coll === 'systems' ? $$(`.node[data-node="${CSS.escape(id)}"]`) : coll === 'flows' ? $$(`[data-edge="${CSS.escape(id)}"]`) : [];
@@ -604,7 +606,7 @@ function stageSize() {
    zoom controls, and left of the side panel when it's open. */
 function visibleArea() {
   const { w, h, top } = stageSize();
-  const bar = $('#methodBar')?.getBoundingClientRect();
+  const bar = $('#topLeft')?.getBoundingClientRect();
   const y = bar && bar.height ? Math.max(0, bar.bottom - top + 8) : 0;
   const bottom = 56;
   const open = $('#drawer').classList.contains('open');
@@ -665,14 +667,14 @@ new ResizeObserver(() => {
   if (!userMovedMap && !sel && state.systems.size && svg.getBoundingClientRect().width) fitAll(false);
 }).observe(svg);
 function fitAll(animate = true) {
-  const b = boundsOf([...state.systems.values()]);
+  const b = boundsOf([...vm.pos.values()]);
   if (!b) { const { w, h } = stageSize(); setView({ x: w / 2, y: h / 2, k: 1 }); return; }
   fitBounds(b, { animate, maxK: 1.2 });
 }
 /* How far someone can zoom depends on the map, not a fixed number: zooming out stops a little
    past the point where everything fits, so a small map never shrinks to a speck. */
 function zoomLimits() {
-  const b = boundsOf([...state.systems.values()]);
+  const b = boundsOf([...vm.pos.values()]);
   if (!b) return { min: 0.25, max: K_MAX };
   const { w, h } = stageSize();
   const fit = Math.min((w - 40) / (b.x2 - b.x1), (h - 40) / (b.y2 - b.y1));
@@ -682,7 +684,7 @@ function zoomLimits() {
 
 /* Keep at least a corner of the map on screen, so you can't pan off into empty space. */
 function clampPan(v) {
-  const b = boundsOf([...state.systems.values()]);
+  const b = boundsOf([...vm.pos.values()]);
   if (!b) return v;
   const { w, h } = stageSize();
   const m = 120;
@@ -747,6 +749,98 @@ function wheelTick() {
    ===================================================================================== */
 const sysOf = (key) => state.systems.get(key);
 
+/* ---- What's on the canvas ----
+   The main map shows core systems (the software the team runs) and the connections between
+   them. Clicking a system opens its own map: that system in the middle, what feeds it on the
+   left, what it feeds on the right, and what it reconciles or syncs with underneath, including
+   supporting pieces (inboxes, spreadsheets, portals) that the main map leaves out.
+   Several connections between the same two systems are drawn as one line. */
+const SUPPORTING_KEYS = new Set(['sys-gift-portals', 'sys-banks', 'sys-finance-inbox', 'sys-gdrive', 'sys-mailroom', 'sys-fixed-assets', 'sys-payroll', 'sys-inventory']);
+const isCore = (s) => !!s && (s.tier ? s.tier === 'core' : !SUPPORTING_KEYS.has(s.key) && s.category !== 'spreadsheet');
+let scope = null;   // the system whose map is open, or null for the main map
+const vm = { pos: new Map(), bundles: new Map(), bundleOf: new Map() };
+const posOf = (k) => vm.pos.get(k);
+const onCanvas = (k) => vm.pos.has(k);
+
+function buildView() {
+  vm.pos = new Map(); vm.bundles = new Map(); vm.bundleOf = new Map();
+  if (scope && !sysOf(scope)) scope = null;
+  let flows;
+  if (!scope) {
+    for (const s of state.systems.values()) if (isCore(s)) vm.pos.set(s.key, s);   // the system itself, so dragging moves it
+    flows = [...state.flows.values()].filter(f => f.from !== f.to && vm.pos.has(f.from) && vm.pos.has(f.to));
+  } else {
+    flows = [...state.flows.values()].filter(f => f.from !== f.to && (f.from === scope || f.to === scope) && sysOf(f.from) && sysOf(f.to));
+    layoutScope(flows);
+  }
+  const pairs = new Map();
+  for (const f of flows) {
+    const pair = [f.from, f.to].sort().join('|');
+    (pairs.get(pair) || pairs.set(pair, []).get(pair)).push(f);
+  }
+  for (const [pair, fs] of pairs) {
+    fs.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const id = fs.length === 1 ? fs[0].key : `pair:${pair}`;
+    vm.bundles.set(id, { id, flows: fs, a: fs[0].from, b: fs[0].to });
+    for (const f of fs) vm.bundleOf.set(f.key, id);
+  }
+}
+
+function layoutScope(flows) {
+  const COL = NODE_W + 200, ROW = NODE_H + 46;
+  vm.pos.set(scope, { key: scope, x: 0, y: 0 });
+  const nb = new Map();
+  for (const f of flows) {
+    const o = f.from === scope ? f.to : f.from;
+    const r = nb.get(o) || nb.set(o, { in: 0, out: 0 }).get(o);
+    if (f.kind === 'flow') f.to === scope ? r.in++ : r.out++;
+  }
+  const groups = { in: [], out: [], side: [] };
+  for (const [k, r] of nb) groups[r.in && !r.out ? 'in' : r.out && !r.in ? 'out' : 'side'].push(k);
+  const order = (a, b) => (isCore(sysOf(b)) - isCore(sysOf(a))) || sysOf(a).name.localeCompare(sysOf(b).name);
+  const column = (list, x) => list.sort(order).forEach((k, i) => vm.pos.set(k, { key: k, x, y: (i - (list.length - 1) / 2) * ROW }));
+  column(groups.in, -COL);
+  column(groups.out, COL);
+  const tallest = Math.max(groups.in.length, groups.out.length, 1);
+  const y = Math.max(NODE_H + 110, ((tallest - 1) / 2) * ROW + ROW + 40);
+  groups.side.sort(order).forEach((k, i) => vm.pos.set(k, { key: k, x: (i - (groups.side.length - 1) / 2) * (NODE_W + 50), y }));
+}
+
+/* Where you are: "All systems", or "All systems › Acumatica" on a system's own map. */
+function renderCrumbs() {
+  const el = $('#crumbs');
+  if (!el) return;
+  if (!scope) {
+    const hidden = [...state.systems.values()].filter(x => !isCore(x)).length;
+    el.innerHTML = `<span class="cr-here">All systems</span>${hidden ? `<span class="cr-sub" title="Supporting pieces (inboxes, spreadsheets, portals…) show on the map of each system they connect to">· ${hidden} supporting inside</span>` : ''}`;
+    return;
+  }
+  const s = sysOf(scope), n = vm.pos.size - 1;
+  el.innerHTML = `<button class="cr-back" data-crumb="" title="Back to all systems (Esc)">← All systems</button><span class="cr-sep">›</span>
+    <button class="cr-here" data-crumb="${esc(scope)}" title="Details">${iniChip(s)}${esc(s.name)}</button><span class="cr-sub">· ${n} connected</span>`;
+}
+$('#crumbs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-crumb]');
+  if (!b) return;
+  if (b.dataset.crumb) select('system', b.dataset.crumb); else { closeDrawer(); setScope(null); }
+});
+
+/* Open a system's own map (or the main map, with null). */
+function setScope(key) {
+  if ((key || null) === scope) return;
+  scope = key || null;
+  if (sel?.type === 'pair') closeDrawer();
+  hover = null;
+  renderCanvas();
+  userMovedMap = false;
+  fitAll(false);
+  schedulePush(true);
+}
+function openSystem(key) {
+  if (key !== scope) setScope(key);
+  select('system', key);
+}
+
 function sideOf(a, b) {
   const dx = b.x - a.x, dy = b.y - a.y;
   if (Math.abs(dx) * NODE_H * 1.6 >= Math.abs(dy) * NODE_W) return dx >= 0 ? 'r' : 'l';
@@ -765,19 +859,19 @@ function anchorPoint(s, side, off) {
    along it, ordered by where their other end sits so the lines don't cross. */
 function edgeGeometry() {
   const slots = new Map(), geo = new Map();
-  for (const f of state.flows.values()) {
-    const a = sysOf(f.from), b = sysOf(f.to);
-    if (!a || !b || a === b) continue;
+  for (const bundle of vm.bundles.values()) {
+    const a = posOf(bundle.a), b = posOf(bundle.b);
+    if (!a || !b) continue;
     const sa = sideOf(a, b), sb = sideOf(b, a);
-    const g = { f, a, b, sa, sb, oa: 0, ob: 0 };
-    geo.set(f.key, g);
+    const g = { f: bundle.flows[0], bundle, a, b, sa, sb, oa: 0, ob: 0 };
+    geo.set(bundle.id, g);
     const push = (k, v) => (slots.get(k) || slots.set(k, []).get(k)).push(v);
     push(`${a.key}|${sa}`, { g, end: 'a', other: b, side: sa });
     push(`${b.key}|${sb}`, { g, end: 'b', other: a, side: sb });
   }
   for (const list of slots.values()) {
     const horiz = list[0].side === 'l' || list[0].side === 'r';
-    list.sort((p, q) => (horiz ? p.other.y - q.other.y : p.other.x - q.other.x) || p.g.f.key.localeCompare(q.g.f.key));
+    list.sort((p, q) => (horiz ? p.other.y - q.other.y : p.other.x - q.other.x) || p.g.bundle.id.localeCompare(q.g.bundle.id));
     const span = horiz ? NODE_H - 22 : NODE_W - 60;
     const n = list.length, stepPx = n > 1 ? Math.min(20, span / (n - 1)) : 0;
     list.forEach((it, i) => { it.g[it.end === 'a' ? 'oa' : 'ob'] = (i - (n - 1) / 2) * stepPx; });
@@ -798,19 +892,28 @@ function edgeGeometry() {
 }
 
 function renderNodes() {
-  const counts = new Map();
-  for (const f of state.flows.values()) for (const k of [f.from, f.to]) counts.set(k, (counts.get(k) || 0) + 1);
+  // Everything each system connects to, and how much of that the main map leaves out
+  const nbrs = new Map();
+  for (const f of state.flows.values()) {
+    if (f.from === f.to) continue;
+    for (const [k, o] of [[f.from, f.to], [f.to, f.from]]) (nbrs.get(k) || nbrs.set(k, new Set()).get(k)).add(o);
+  }
   const nameFont = `600 14px ${FONT}`, metaFont = `11.5px ${FONT}`;
-  $('#nodes').innerHTML = [...state.systems.values()].map(s => {
-    const c = catOf(s), n = counts.get(s.key) || 0;
-    const meta = n ? c.label : `${c.label} · not connected`;
-    return `<g class="node" data-node="${esc(s.key)}" transform="translate(${s.x - NODE_W / 2},${s.y - NODE_H / 2})" tabindex="0" role="button" aria-label="${esc(s.name)}, ${esc(c.label)}">
-      <title>${esc(s.name)}${s.description ? ' — ' + esc(s.description) : ''}</title>
+  $('#nodes').innerHTML = [...vm.pos.entries()].map(([key, p]) => {
+    const s = sysOf(key), c = catOf(s), ns = nbrs.get(key) || new Set();
+    const hidden = scope ? 0 : [...ns].filter(k => !onCanvas(k)).length;
+    const meta = !ns.size ? `${c.label} · not connected` : c.label;
+    const cls = ['node', isCore(s) ? '' : 'supporting', key === scope ? 'center' : ''].filter(Boolean).join(' ');
+    const tip = key === scope ? 'Click for details' : `Click to open ${s.name}'s map${hidden ? `: ${hidden} more system${hidden > 1 ? 's' : ''} connect to it` : ''}`;
+    return `<g class="${cls}" data-node="${esc(s.key)}" transform="translate(${p.x - NODE_W / 2},${p.y - NODE_H / 2})" tabindex="0" role="button" aria-label="${esc(s.name)}, ${esc(c.label)}">
+      <title>${esc(s.name)}${s.description ? ' — ' + esc(s.description) : ''}
+${esc(tip)}</title>
       <rect class="node-card" width="${NODE_W}" height="${NODE_H}" rx="14"/>
       <rect x="14" y="16" width="36" height="36" rx="10" fill="${c.color}"/>
       <text class="node-ini" x="32" y="38.5">${esc(initials(s.name))}</text>
       <text class="node-name" x="62" y="31">${esc(fitText(s.name, nameFont, NODE_W - 76))}</text>
       <text class="node-meta" x="62" y="49">${esc(fitText(meta, metaFont, NODE_W - 76))}</text>
+      ${hidden ? `<g class="node-more" transform="translate(${NODE_W - 8},0)"><rect x="-26" y="-11" width="34" height="22" rx="11"/><text x="-9" y="4" text-anchor="middle">+${hidden}</text></g>` : ''}
       <circle class="node-handle" cx="${NODE_W}" cy="${NODE_H / 2}" r="7"><title>Drag to connect ${esc(s.name)} to another system</title></circle>
     </g>`;
   }).join('');
@@ -822,6 +925,7 @@ function renderEdges() {
   const labelFont = `500 11.5px ${FONT}`;
   const nameFont = `11px ${FONT}`;
   for (const g of geo.values()) {
+    if (g.bundle.flows.length > 1) { renderBundle(g, lines, labels, labelFont); continue; }
     const f = g.f, k = f.kind, m = methodOf(f), mk = METHODS[f.method] ? f.method : 'unset';
     const markers = k === 'flow' ? `marker-end="url(#m-arrow-${mk})"`
       : k === 'sync' ? `marker-end="url(#m-arrow-${mk})" marker-start="url(#m-arrow-${mk})"`
@@ -861,8 +965,40 @@ function renderEdges() {
   edgeGeo = geo;
 }
 
+/* Several connections between the same two systems: one line, labelled with how many. Its
+   colour is their method if they share one; arrows show which way data goes. */
+function renderBundle(g, lines, labels, labelFont) {
+  const fs = g.bundle.flows, id = g.bundle.id;
+  const mks = new Set(fs.map(f => METHODS[f.method] ? f.method : 'unset'));
+  const mk = mks.size === 1 ? [...mks][0] : 'mixed';
+  const color = mk === 'mixed' ? MIXED_COLOR : (METHODS[mk] || METHOD_UNSET).color;
+  const fwd = fs.some(f => f.kind !== 'reconcile' && (f.from === g.bundle.a || f.kind === 'sync'));
+  const back = fs.some(f => f.kind !== 'reconcile' && (f.from === g.bundle.b || f.kind === 'sync'));
+  const recOnly = !fwd && !back;
+  const markers = recOnly ? `marker-end="url(#m-circ-${mk})" marker-start="url(#m-circ-${mk})"`
+    : `${fwd ? `marker-end="url(#m-arrow-${mk})"` : ''} ${back ? `marker-start="url(#m-arrow-${mk})"` : ''}`;
+  lines.push(`<g class="edge bundle m-${mk}${recOnly ? ' k-reconcile' : ''}" data-edge="${esc(id)}">
+    <path class="edge-hit" d="${g.d}"/>
+    <path class="edge-line" d="${g.d}" stroke="${color}" ${markers}/>
+  </g>`);
+  const text = `${fs.length} connections`;
+  const w = Math.ceil(textWidth(text, labelFont)) + 40;
+  g.labelW = w;
+  const m = mk === 'mixed' ? METHODS.other : (METHODS[mk] || METHOD_UNSET);
+  labels.push(`<g class="edge-label bundle" data-edge="${esc(id)}" transform="translate(${g.mid.x},${g.mid.y})">
+    <title>${esc(fs.map(f => `${flowLabel(f)} (${methodOf(f).label})`).join('\n'))}</title>
+    <rect class="pill" x="${-w / 2}" y="-12" width="${w}" height="24" rx="12" style="stroke:${color}"/>
+    <circle cx="${-w / 2 + 12}" cy="0" r="9" fill="${color}"/>
+    <g transform="translate(${-w / 2 + 6.5},-5.5) scale(.46)" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="${m.icon}"/></g>
+    <text x="${-w / 2 + 26}" y="4">${esc(text)}</text>
+  </g>`);
+}
+const MIXED_COLOR = '#6E7681';
+
 let edgeGeo = null;
 function renderCanvas() {
+  buildView();
+  renderCrumbs();
   renderNodes();
   renderEdges();
   renderLegend();
@@ -888,6 +1024,8 @@ function relatedTo(target) {
   if (target.type === 'system') {
     n.add(target.id);
     for (const f of state.flows.values()) if (f.from === target.id || f.to === target.id) { e.add(f.key); n.add(f.from); n.add(f.to); }
+  } else if (target.type === 'pair') {
+    for (const f of vm.bundles.get(target.id)?.flows || []) { e.add(f.key); n.add(f.from); n.add(f.to); }
   } else {
     const f = state.flows.get(target.id);
     if (f) { e.add(f.key); n.add(f.from); n.add(f.to); }
@@ -898,7 +1036,7 @@ let methodFilter = null;
 function relatedToMethod(mk) {
   const n = new Set(), e = new Set();
   for (const f of state.flows.values()) {
-    if ((METHODS[f.method] ? f.method : 'unset') !== mk) continue;
+    if ((METHODS[f.method] ? f.method : 'unset') !== mk || !vm.bundleOf.has(f.key)) continue;
     e.add(f.key); n.add(f.from); n.add(f.to);
   }
   return { n, e };
@@ -912,9 +1050,9 @@ function applyHighlight() {
     el.classList.toggle('sel', sel?.type === 'system' && sel.id === id);
   }
   for (const el of $$('[data-edge]', svg)) {
-    const id = el.dataset.edge;
-    el.classList.toggle('hl', !!focus?.e.has(id));
-    el.classList.toggle('sel', sel?.type === 'flow' && sel.id === id);
+    const id = el.dataset.edge, fs = vm.bundles.get(id)?.flows || [];
+    el.classList.toggle('hl', fs.some(f => focus?.e.has(f.key)));
+    el.classList.toggle('sel', (sel?.type === 'pair' && sel.id === id) || (sel?.type === 'flow' && fs.some(f => f.key === sel.id)));
   }
   renderProcMarks();
 }
@@ -934,10 +1072,10 @@ function renderProcMarks() {
   const p = sel?.type === 'process' ? state.processes.get(sel.id) : null;
   if (!p) { g.innerHTML = ''; return; }
   const at = new Map();
-  stepsOf(p).forEach((s, i) => { if (s.system && sysOf(s.system)) (at.get(s.system) || at.set(s.system, []).get(s.system)).push(i + 1); });
+  stepsOf(p).forEach((s, i) => { if (s.system && onCanvas(s.system)) (at.get(s.system) || at.set(s.system, []).get(s.system)).push(i + 1); });
   const font = `600 11.5px ${FONT}`;
   g.innerHTML = [...at].map(([key, nums]) => {
-    const s = sysOf(key);
+    const s = posOf(key);
     const text = fitText(`${nums.length === 1 ? 'Step' : 'Steps'} ${stepRanges(nums)}`, font, NODE_W + 40);
     const w = Math.ceil(textWidth(text, font)) + 20;
     return `<g class="proc-mark" transform="translate(${s.x},${s.y + NODE_H / 2 + 16})">
@@ -972,6 +1110,9 @@ svg.addEventListener('pointerdown', (e) => {
   const edgeEl = t.closest?.('[data-edge]');
   if (t.closest?.('.node-handle') && nodeEl) {
     drag = { type: 'link', from: nodeEl.dataset.node, start, moved: false };
+  } else if (nodeEl && scope) {
+    // A system's own map is laid out for you: dragging it pans, clicking opens.
+    drag = { type: 'pan', start, v0: { ...view }, moved: false, node: nodeEl.dataset.node };
   } else if (nodeEl) {
     const s = sysOf(nodeEl.dataset.node);
     drag = { type: 'node', id: s.key, el: nodeEl, start, orig: { x: s.x, y: s.y }, moved: false };
@@ -1012,7 +1153,7 @@ svg.addEventListener('pointermove', (e) => {
     drag.el.setAttribute('transform', `translate(${s.x - NODE_W / 2},${s.y - NODE_H / 2})`);
     renderEdges(); applyHighlight(); renderPeerMarks();
   } else if (drag.type === 'link') {
-    const a = sysOf(drag.from), w = toWorld(p.x, p.y);
+    const a = posOf(drag.from), w = toWorld(p.x, p.y);
     const x0 = a.x + NODE_W / 2, y0 = a.y;
     const c = Math.max(40, Math.abs(w.x - x0) * .45);
     ghost.setAttribute('d', `M${x0},${y0} C${x0 + c},${y0} ${w.x - c},${w.y} ${w.x},${w.y}`);
@@ -1038,11 +1179,12 @@ function endPointer(e) {
       const x = Math.round(s.x / 10) * 10, y = Math.round(s.y / 10) * 10;
       s.x = d.orig.x; s.y = d.orig.y;
       edit('systems', d.id, (e2) => { e2.x = x; e2.y = y; });
-    } else select('system', d.id);
+    } else openSystem(d.id);
   } else if (d.type === 'edge') {
-    if (!d.moved) select('flow', d.id, { step: d.step });
+    if (!d.moved) select(d.id.startsWith('pair:') ? 'pair' : 'flow', d.id, { step: d.step });
   } else if (d.type === 'pan') {
-    if (!d.moved && sel) closeDrawer();
+    if (!d.moved && d.node) openSystem(d.node);
+    else if (!d.moved && sel) closeDrawer();
   } else if (d.type === 'link') {
     ghost.hidden = true;
     $$('.node.drop').forEach(n => n.classList.remove('drop'));
@@ -1056,7 +1198,8 @@ svg.addEventListener('pointercancel', endPointer);
 function updateHover(t) {
   if (sel) { if (hover) { hover = null; } return; }
   const nodeEl = t.closest?.('.node'), edgeEl = t.closest?.('[data-edge]');
-  const h = nodeEl ? { type: 'system', id: nodeEl.dataset.node } : edgeEl ? { type: 'flow', id: edgeEl.dataset.edge } : null;
+  const eid = edgeEl?.dataset.edge;
+  const h = nodeEl ? { type: 'system', id: nodeEl.dataset.node } : eid ? { type: eid.startsWith('pair:') ? 'pair' : 'flow', id: eid } : null;
   if (h?.type === hover?.type && h?.id === hover?.id) return;
   hover = h; applyHighlight();
 }
@@ -1108,7 +1251,7 @@ svg.addEventListener('dblclick', (e) => {
 svg.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const n = e.target.closest?.('.node');
-  if (n) { e.preventDefault(); select('system', n.dataset.node); }
+  if (n) { e.preventDefault(); openSystem(n.dataset.node); }
 });
 
 /* =====================================================================================
@@ -1121,7 +1264,14 @@ const drFoot = $('#drFoot');
 const drawerHasFocus = () => drawer.contains(document.activeElement) && document.activeElement !== document.body;
 
 function select(type, id, { focus = true, step = null } = {}) {
-  if (!mapOf(collOf(type)).has(id)) return;
+  if (type === 'pair' ? !vm.bundles.has(id) : !mapOf(collOf(type)).has(id)) return;
+  // Bring what's being opened onto the canvas: a system that isn't shown opens its own map;
+  // a connection that isn't shown opens the map of its core end.
+  if (type === 'system' && !onCanvas(id)) setScope(id);
+  if (type === 'flow' && !vm.bundleOf.has(id)) {
+    const f = state.flows.get(id);
+    setScope(isCore(sysOf(f.from)) || !isCore(sysOf(f.to)) ? f.from : f.to);
+  }
   flushDebounced();
   const same = sel?.type === type && sel.id === id;
   sel = { type, id };
@@ -1137,19 +1287,17 @@ function select(type, id, { focus = true, step = null } = {}) {
 
 function focusSelection() {
   if (!sel) return;
+  const fit = (keys, opts) => { const ps = keys.map(posOf).filter(Boolean); if (ps.length) fitBounds(boundsOf(ps), opts); };
   if (sel.type === 'system') {
-    const s = sysOf(sel.id);
-    const others = [...state.flows.values()].filter(f => f.from === s.key || f.to === s.key)
-      .map(f => sysOf(f.from === s.key ? f.to : f.from)).filter(Boolean);
-    fitBounds(boundsOf([s, ...others]), { maxK: 1.25, pad: 60 });
+    if (sel.id === scope) return fitBounds(boundsOf([...vm.pos.values()]), { maxK: 1.25, pad: 60 });
+    const nbrs = [...vm.bundles.values()].filter(b => b.a === sel.id || b.b === sel.id).map(b => b.a === sel.id ? b.b : b.a);
+    fit([sel.id, ...nbrs], { maxK: 1.25, pad: 60 });
   } else if (sel.type === 'process') {
     const p = state.processes.get(sel.id);
-    const systems = p ? [...processFootprint(p).n].map(sysOf).filter(Boolean) : [];
-    if (systems.length) fitBounds(boundsOf(systems), { maxK: 1.25, pad: 60 });
+    if (p) fit([...processFootprint(p).n], { maxK: 1.25, pad: 60 });
   } else {
-    const f = state.flows.get(sel.id);
-    const a = sysOf(f.from), b = sysOf(f.to);
-    if (a && b) fitBounds(boundsOf([a, b]), { maxK: 1.7, pad: 80 });
+    const b = vm.bundles.get(sel.type === 'pair' ? sel.id : vm.bundleOf.get(sel.id));
+    if (b) fit([b.a, b.b], { maxK: 1.7, pad: 80 });
   }
 }
 
@@ -1181,6 +1329,7 @@ function renderDrawer() {
   const top = drScroll.scrollTop;
   if (sel.type === 'system') renderSystemDrawer(sysOf(sel.id));
   else if (sel.type === 'process') renderProcessDrawer(state.processes.get(sel.id));
+  else if (sel.type === 'pair') renderPairDrawer(vm.bundles.get(sel.id));
   else renderFlowDrawer(state.flows.get(sel.id));
   drScroll.scrollTop = top;
   $$('textarea', drawer).forEach(autosize);
@@ -1204,6 +1353,34 @@ function usedInSection(list, what) {
   </section>`;
 }
 const procIcon = (size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>`;
+
+/* Several connections between the same two systems, one line on the map: list them. */
+function renderPairDrawer(b) {
+  if (!b) return closeDrawer();
+  const A = sysOf(b.a), B = sysOf(b.b);
+  drScroll.innerHTML = `
+    <div class="dr-top">
+      <span class="kicker">${b.flows.length} connections</span>
+      <button class="icon-btn" data-act="close" aria-label="Close">✕</button>
+    </div>
+    <div class="route">
+      <button class="sys-chip" data-act="open-sys" data-id="${esc(b.a)}">${iniChip(A)}${esc(A?.name || '?')}</button>
+      <span class="route-arrow">⇄</span>
+      <button class="sys-chip" data-act="open-sys" data-id="${esc(b.b)}">${iniChip(B)}${esc(B?.name || '?')}</button>
+    </div>
+    <h2 class="dr-heading">Everything between ${esc(A?.name)} and ${esc(B?.name)}</h2>
+    <section class="sec">
+      ${b.flows.map(f => {
+        const m = methodOf(f), n = f.steps.length, st = statusOf(f);
+        return `<button class="conn-row" data-act="open-flow" data-id="${esc(f.key)}">
+          <span class="ini" style="background:${m.color}">${methodIcon(m, 13, '#fff')}</span>
+          <span class="c-main"><span class="c-name">${esc(f.name || LINK_KINDS[f.kind].label)}</span>
+          <span class="c-sub">${esc(sysOf(f.from)?.name)} ${f.kind === 'flow' ? '→' : '⇄'} ${esc(sysOf(f.to)?.name)} · ${esc(m.label)}${f.frequency ? ' · ' + esc(f.frequency) : ''}</span></span>
+          <span class="badge ${st.cls}">${n} step${n === 1 ? '' : 's'}</span></button>`;
+      }).join('')}
+    </section>`;
+  drFoot.innerHTML = '';
+}
 
 function renderSystemDrawer(s) {
   if (!s) return closeDrawer();
@@ -1231,6 +1408,10 @@ function renderSystemDrawer(s) {
     </div>
     <div class="here" id="drHere" hidden></div>
     <input class="dr-title" data-field="name" value="${esc(s.name)}" placeholder="System name" aria-label="System name">
+    <div class="tier-pick" role="radiogroup" aria-label="Where it shows">
+      ${[['core', 'Core system', 'On the main map'], ['supporting', 'Supporting', "Only on the maps of what it connects to"]].map(([id, label, hint]) =>
+        `<button type="button" role="radio" aria-checked="${isCore(s) === (id === 'core')}" class="${isCore(s) === (id === 'core') ? 'on' : ''}" data-act="tier" data-tier="${id}" title="${esc(hint)}"><b>${label}</b><span>${hint}</span></button>`).join('')}
+    </div>
     <label class="fld"><span>What it's used for</span>
       <textarea data-field="description" rows="2" placeholder="What data lives here, and what the team uses it for">${esc(s.description)}</textarea></label>
     <div class="fld-row">
@@ -1520,7 +1701,7 @@ drawer.addEventListener('click', async (e) => {
   switch (act) {
     case 'close': closeDrawer(); break;
     case 'open-flow': select('flow', btn.dataset.id); break;
-    case 'open-sys': select('system', btn.dataset.id); break;
+    case 'open-sys': openSystem(btn.dataset.id); break;
     case 'open-proc': select('process', btn.dataset.id); break;
     case 'pstep-add': addProcStep(btn.closest('[data-secid]').dataset.secid, null); break;
     case 'pstep-up':
@@ -1593,6 +1774,13 @@ drawer.addEventListener('click', async (e) => {
     }
     case 'connect': newConnection({ from: key }); break;
     case 'swap': edit('flows', key, (x) => { [x.from, x.to] = [x.to, x.from]; }); renderDrawer(); break;
+    case 'tier': {
+      const t = btn.dataset.tier;
+      edit('systems', key, (x) => { x.tier = t; });
+      renderDrawer();
+      toast(t === 'core' ? `${sysOf(key).name} is on the main map.` : `${sysOf(key).name} now shows only on the maps of what it connects to.`);
+      break;
+    }
     case 'method': { const m = btn.dataset.m; edit('flows', key, (x) => { x.method = x.method === m ? '' : m; }); renderDrawer(); break; }
     case 'step-add': addStep(null); break;
     case 'step-up':
@@ -1731,13 +1919,25 @@ async function newSystem(at) {
     <div class="d-actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Add system</button></div>
   </form>`, (fd) => ({ name: String(fd.get('name')).trim(), category: fd.get('category'), description: String(fd.get('description')).trim() }));
   if (!values?.name) return;
-  const pos = at || openSpot();
+  // On a system's own map the layout is automatic, so the new system's spot on the main map
+  // is found near that system instead.
+  const pos = scope ? spotNear(sysOf(scope)) : at || openSpot();
   const s = { key: rid('sys'), ...values, owner: '', url: '', x: Math.round(pos.x / 10) * 10, y: Math.round(pos.y / 10) * 10 };
   createEntity('systems', s);
   renderCanvas();
   select('system', s.key);
 }
 
+function spotNear(c) {
+  const hits = (p) => [...state.systems.values()].some(s => isCore(s) && Math.abs(s.x - p.x) < NODE_W + 20 && Math.abs(s.y - p.y) < NODE_H + 30);
+  for (let r = 1; r < 14; r++) {
+    for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const p = { x: c.x + dx * r * (NODE_W + 40), y: c.y + dy * r * (NODE_H + 50) };
+      if (!hits(p)) return p;
+    }
+  }
+  return { x: c.x, y: c.y + NODE_H + 50 };
+}
 /* Somewhere near the middle of the view that doesn't sit on top of another system. */
 function openSpot() {
   const a = visibleArea();
@@ -2014,7 +2214,8 @@ function planImport(pack, { replace = false } = {}) {
       if (state.systems.has(key)) plan.kept.systems.push(sysOf(key).name);
     } else {
       key = raw.key && /^[\w-]{1,100}$/.test(raw.key) && !plan.systems.some(x => x.key === raw.key) ? raw.key : rid('sys');
-      plan.systems.push({ key, name, category: CAT[raw.category] ? raw.category : 'other', description: str(raw.description), owner: str(raw.owner), url: str(raw.url), x: 0, y: 0 });
+      plan.systems.push({ key, name, category: CAT[raw.category] ? raw.category : 'other', description: str(raw.description), owner: str(raw.owner), url: str(raw.url),
+        tier: raw.tier === 'core' || raw.tier === 'supporting' ? raw.tier : '', x: 0, y: 0 });
     }
     for (const n of [raw.key, ...names]) if (n) { sysRef.set(norm(n), key); byName.set(norm(n), key); }
   }
@@ -2225,7 +2426,7 @@ async function applyBundledImports() {
       few up-and-down passes), so lines are short and cross as little as possible. */
 function computeLayout() {
   const COL_W = NODE_W + 180, ROW_H = NODE_H + 52;
-  const nodes = [...state.systems.values()];
+  const nodes = [...state.systems.values()].filter(isCore);   // only the main map is laid out by hand
   const keys = new Set(nodes.map(s => s.key));
   const links = [...state.flows.values()].filter(f => keys.has(f.from) && keys.has(f.to) && f.from !== f.to);
   const out = new Map(nodes.map(s => [s.key, new Set()]));
@@ -2312,6 +2513,7 @@ function computeLayout() {
 async function tidyLayout() {
   const ok = await confirmDialog({ title: 'Tidy the layout?', body: 'Systems will be arranged left to right in the order data flows through them. This moves them for everyone, and you can undo it straight after.', confirm: 'Tidy layout' });
   if (!ok) return;
+  if (scope) setScope(null);
   const before = new Map([...state.systems.values()].map(s => [s.key, { x: s.x, y: s.y }]));
   const target = computeLayout();
   moveSystems(target);
@@ -2366,6 +2568,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !dialogOpen()) {
     if (typing) { e.target.blur(); return; }
     if (sel) closeDrawer();
+    else if (scope) setScope(null);
     return;
   }
   if (typing || dialogOpen() || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2378,7 +2581,7 @@ document.addEventListener('keydown', (e) => {
 /* Arrowheads and end-circles in each method's colour. */
 {
   const defs = $('#canvas defs');
-  const all = [...Object.entries(METHODS), ['unset', METHOD_UNSET]];
+  const all = [...Object.entries(METHODS), ['unset', METHOD_UNSET], ['mixed', { color: MIXED_COLOR }]];
   defs.insertAdjacentHTML('beforeend', all.map(([k, m]) => `
     <marker id="m-arrow-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${m.color}"/></marker>
     <marker id="m-circ-${k}" viewBox="0 0 12 12" refX="6" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse"><circle cx="6" cy="6" r="4" class="mk-circ" stroke="${m.color}"/></marker>`).join(''));
@@ -2386,14 +2589,14 @@ document.addEventListener('keydown', (e) => {
 
 function renderLegend() {
   const counts = {};
-  for (const f of state.flows.values()) { const k = METHODS[f.method] ? f.method : 'unset'; counts[k] = (counts[k] || 0) + 1; }
+  for (const f of state.flows.values()) { if (!vm.bundleOf.has(f.key)) continue; const k = METHODS[f.method] ? f.method : 'unset'; counts[k] = (counts[k] || 0) + 1; }
   // The always-visible filter bar: how data moves, at a glance
   const bar = [...Object.entries(METHODS), ['unset', METHOD_UNSET]].filter(([k]) => k !== 'unset' || counts.unset);
   $('#methodBar').innerHTML = `<span class="mb-lbl">How data moves</span>` + bar.map(([k, m]) => `
     <button type="button" class="mb-chip${methodFilter === k ? ' on' : ''}${counts[k] ? '' : ' zero'}" data-method="${k}" aria-pressed="${methodFilter === k}" title="${esc(m.hint)}${methodFilter === k ? ' · click again to show everything' : ' · click to show only these'}" style="--mc:${m.color}">
       <span class="lm-icon" style="background:${m.color}">${methodIcon(m, 11, '#fff')}</span>${esc(k === 'unset' ? 'Not set' : m.label)}<span class="lm-count">${counts[k] || 0}</span></button>`).join('');
   for (const k in counts) delete counts[k];
-  for (const f of state.flows.values()) { const k = METHODS[f.method] ? f.method : 'unset'; counts[k] = (counts[k] || 0) + 1; }
+  for (const f of state.flows.values()) { if (!vm.bundleOf.has(f.key)) continue; const k = METHODS[f.method] ? f.method : 'unset'; counts[k] = (counts[k] || 0) + 1; }
   const methods = [...Object.entries(METHODS), ['unset', METHOD_UNSET]].filter(([k]) => k !== 'unset' || counts.unset);
   $('#legendBody').innerHTML = `
   <div><h4>How data moves <span style="text-transform:none;letter-spacing:0;font-weight:400">· click to filter</span></h4><ul>${methods.map(([k, m]) => `
@@ -2420,8 +2623,8 @@ if (matchMedia('(max-width: 760px)').matches) $('#legend').open = false;
 else $('#legend').open = ls.get('finflow:legend') === 'open';
 $('#legend').addEventListener('toggle', () => ls.set('finflow:legend', $('#legend').open ? 'open' : 'closed'));
 
-if (!ls.get('finflow:hint-dismissed')) $('#hint').hidden = false;
-$('#hintClose').addEventListener('click', () => { $('#hint').hidden = true; ls.set('finflow:hint-dismissed', '1'); });
+if (!ls.get('finflow:hint2-dismissed')) $('#hint').hidden = false;
+$('#hintClose').addEventListener('click', () => { $('#hint').hidden = true; ls.set('finflow:hint2-dismissed', '1'); });
 
 addEventListener('resize', () => { if (sel) focusSelection(); });
 setInterval(() => { if (sel && !drawerHasFocus()) { const t = $('span', drFoot); const e = mapOf(collOf(sel.type)).get(sel.id); if (t && e) t.innerHTML = footText(e); } }, 30000);
@@ -2474,7 +2677,7 @@ function presenceRecord() {
     name: user.name || 'Someone', first: user.first || '', email: user.email || '', avatar: user.avatar || '',
     color: user.color, seq: ++me.seq, ts: Date.now(),
     cursor: !!me.cursor && !document.hidden, ci: me.ci, samples: me.samples.slice(-TRAIL),
-    sel: sel ? { type: sel.type, id: sel.id } : null, editing: me.editing, step: sel ? me.step : null, rev: me.rev, away: document.hidden,
+    scope, sel: sel && sel.type !== 'pair' ? { type: sel.type, id: sel.id } : null, editing: me.editing, step: sel ? me.step : null, rev: me.rev, away: document.hidden,
   } };
 }
 
@@ -2572,7 +2775,7 @@ function ingestPresence(list) {
       sel: d.sel && typeof d.sel.id === 'string' && ['system', 'flow', 'process'].includes(d.sel.type) ? d.sel : null,
       editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
       step: typeof d.step === 'string' ? d.step.slice(0, 64) : null,
-      away: !!d.away, self,
+      away: !!d.away, self, scope: typeof d.scope === 'string' ? d.scope : null,
     });
   }
   for (const k of [...peers.keys()]) if (!seen.has(k)) peers.delete(k);
@@ -2609,7 +2812,7 @@ addEventListener('pagehide', () => { if (presenceOn) store.rec.remove('presence'
 /* ---- Showing them ---- */
 function whereIs(p) {
   if (p.away) return 'away from the map';
-  if (!p.sel) return 'looking around the map';
+  if (!p.sel) return p.scope && sysOf(p.scope) ? `looking at ${sysOf(p.scope).name}'s map` : 'looking around the map';
   if (p.sel.type === 'system') return `viewing ${sysOf(p.sel.id)?.name || 'a system'}`;
   if (p.sel.type === 'process') return `viewing ${state.processes.get(p.sel.id)?.name || 'a process'}`;
   const f = state.flows.get(p.sel.id);
@@ -2634,6 +2837,7 @@ $('#peers').addEventListener('click', (e) => {
   if (!p) return;
   if (p.sel && mapOf(collOf(p.sel.type)).has(p.sel.id)) select(p.sel.type, p.sel.id);
   else if (p.pos) {
+    setScope(p.scope);
     const a = visibleArea();
     animateTo({ x: a.x + a.w / 2 - p.pos.x * view.k, y: a.y + a.h / 2 - p.pos.y * view.k, k: view.k });
   } else toast(`${p.first || p.name} is ${whereIs(p)}.`);
@@ -2674,10 +2878,10 @@ function renderPeerMarks() {
     const { type, id } = ps[0].sel;
     let box;
     if (type === 'system') {
-      const s = sysOf(id); if (!s) continue;
+      const s = posOf(id); if (!s) continue;
       box = { x: s.x - NODE_W / 2, y: s.y - NODE_H / 2, w: NODE_W, h: NODE_H, r: 14 };
     } else {
-      const eg = edgeGeo?.get(id); if (!eg) continue;
+      const eg = edgeGeo?.get(vm.bundleOf.get(id)); if (!eg) continue;
       box = { x: eg.mid.x - eg.labelW / 2, y: eg.mid.y - 12, w: eg.labelW, h: 24, r: 12 };
     }
     ps.forEach((p, i) => {
@@ -2774,7 +2978,7 @@ function cursorFrame(now) {
     const label = p.self ? 'You (other window)' : (p.first || p.name);
     if (el.lastChild.textContent !== label) el.lastChild.textContent = label;
     advanceCursor(p, now);
-    const show = p.onCanvas && !p.away && p.pos;
+    const show = p.onCanvas && !p.away && p.pos && p.scope === scope;   // cursors only line up on the same map
     el.classList.toggle('hide', !show);
     if (p.pos) el.style.transform = `translate(${p.pos.x * view.k + view.x - 1.5}px, ${p.pos.y * view.k + view.y - 1.5}px)`;
   }
