@@ -11,9 +11,10 @@ step-by-step processes the team follows. It's a [bp-vibes](CLAUDE.md) app with n
   type. Click a dot to go straight to that step.
 - **Click a system** to see its owner, what it's used for, everything it sends, receives,
   reconciles or syncs with, and the processes that use it.
-- **Processes** (top bar) lists the team's step-by-step instructions. Open one to read and edit
-  it; the map lights up the systems and connections it uses and tags each system with its step
-  numbers.
+- **Processes** (top bar) is the register of every process the team runs, documented or not:
+  status, owner, how often, systems, steps and a link to the source document. Filter it by area,
+  owner, system or status. Open a process to read and edit its steps; the map lights up the
+  systems and connections it uses and tags each system with its step numbers.
 
 Every edit saves automatically and is shared with anyone signed in at BibleProject.
 
@@ -36,6 +37,15 @@ happens; open a system or connection and it lists the processes that use it.
 Some processes are mostly about moving data (EFT gifts into Salesforce). Others are checklists
 that mostly happen inside one system (month-end close). Both are processes; only the steps that
 move data between two systems are connections.
+
+**Owners.** A process has a **process owner**, accountable for the whole thing. A step can have
+its own **owner** when someone else does it; a step without one belongs to the process owner
+(its owner field shows that in faint text). Filtering the Processes page by a person shows every
+process they own outright, and every process where they own steps, with how many.
+
+**Status.** *Not documented yet* (it's on the list, but nobody has written it up), *Documented*,
+or *Needs review*. Add processes as soon as you know they exist; **+ Add a process** only needs a
+name. A process with no status set counts as documented once it has steps.
 
 Processes can also carry read-only **reference tables**, such as the EFT source table or the
 DAF vs. QCD keyword list.
@@ -96,7 +106,7 @@ All declared in `vibes.json`:
 | --- | --- | --- |
 | `systems` | piece of software / spreadsheet | name, category, description, owner, link, map position |
 | `flows` | connection between two systems | `refs.from` / `refs.to` → `systems/<key>`; kind, name, description, frequency, owner, ordered `steps` |
-| `processes` | process | name, area, purpose, frequency, owner, source document, `sections` of `steps` (text, who, system key, connection key), `reference` tables |
+| `processes` | process | name, area, purpose, frequency, owner, status, source document name and link (`docUrl`), `sections` of `steps` (text, owner as `who`, system key, connection key), `reference` tables |
 | `meta` | — | `seeded` marker, so the starter map from the original runbook is written only once; one `import-<file>` marker per shipped import |
 | `presence` | open browser tab | cursor trail, what's open, what's being edited; ephemeral |
 

@@ -314,7 +314,8 @@ function normalizeProcess(key, d) {
   const cells = (row) => arr(row).map(c => str(c) || (Number.isFinite(c) ? String(c) : ''));
   return {
     key, name: str(d.name) || 'Untitled process', area: str(d.area), purpose: str(d.purpose),
-    frequency: str(d.frequency), owner: str(d.owner), source: str(d.source),
+    frequency: str(d.frequency), owner: str(d.owner), source: str(d.source), docUrl: str(d.docUrl),
+    status: PROC_STATUS[d.status] ? d.status : '',
     sections: arr(d.sections).map(sec => ({
       id: str(sec?.id) || rid('sec'), title: str(sec?.title),
       steps: arr(sec?.steps).map(s => ({ id: str(s?.id) || rid('st'), text: str(s?.text), who: str(s?.who), system: str(s?.system), flow: str(s?.flow) })),
@@ -1326,6 +1327,13 @@ const linkify = (t) => esc(t).replace(/https?:\/\/[^\s<]+[^\s<.,;:)]/g, (u) => {
   return `<a href="${u}" target="_blank" rel="noopener" title="${u}">${host} ↗</a>`;
 });
 
+/* "Step owners: Johanna Keel (6), Alayna Phillips (9)…" — everyone besides the process owner. */
+function stepOwnerLine(p) {
+  const others = [...ownersOf(p)].filter(([, o]) => !o.whole && o.steps);
+  if (!others.length) return '';
+  return `<p class="proc-src">Step owners: ${others.map(([n, o]) => `${esc(n)} (${o.steps})`).join(', ')}${p.owner ? `. Steps without an owner are ${esc(p.owner)}'s.` : ''}</p>`;
+}
+
 function renderProcessDrawer(p) {
   if (!p) return closeDrawer();
   const systems = [...state.systems.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -1343,7 +1351,7 @@ function renderProcessDrawer(p) {
         <span class="tl-peer"></span>
         <textarea class="tl-text" data-sfield="text" rows="1" placeholder="Describe this step…" aria-label="Step ${n}">${esc(s.text)}</textarea>
         <div class="tl-meta wrap">
-          <input class="tool-input who-input" data-sfield="who" value="${esc(s.who)}" placeholder="Who" aria-label="Who does step ${n}">
+          <input class="tool-input who-input" data-sfield="who" value="${esc(s.who)}" list="people" placeholder="${esc(p.owner ? `Owner: ${p.owner}` : 'Owner')}" title="${esc(s.who ? 'Owns this step' : p.owner ? `No owner of its own, so it's ${p.owner}'s as process owner` : 'Who owns this step')}" aria-label="Owner of step ${n}">
           <select class="kind-select sys-select" data-sfield="system" aria-label="System for step ${n}">
             <option value="">No system</option>
             ${systems.map(x => `<option value="${esc(x.key)}" ${x.key === s.system ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
@@ -1406,10 +1414,17 @@ function renderProcessDrawer(p) {
         ${FREQUENCIES.map(q => `<option value="${esc(q)}" ${q === p.frequency ? 'selected' : ''}>${q || 'Not set'}</option>`).join('')}
         ${p.frequency && !FREQUENCIES.includes(p.frequency) ? `<option selected>${esc(p.frequency)}</option>` : ''}
       </select></label>
-      <label class="fld"><span>Owner</span><input data-field="owner" value="${esc(p.owner)}" placeholder="Who runs it"></label>
+      <label class="fld"><span>Process owner</span><input data-field="owner" value="${esc(p.owner)}" list="people" placeholder="Who's accountable"></label>
+    </div>
+    <div class="fld-row status-row">
+      <label class="fld"><span>Status</span><select data-field="status">
+        ${Object.entries(PROC_STATUS).map(([k, x]) => `<option value="${k}" ${k === procStatus(p) ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}
+      </select></label>
+      <label class="fld"><span>Source document</span><span class="url-wrap"><input data-field="docUrl" value="${esc(p.docUrl)}" placeholder="${esc(p.source ? `Link to ${p.source}` : 'https://docs.google.com/…')}">${/^https?:\/\//i.test(p.docUrl) ? `<a href="${esc(p.docUrl)}" target="_blank" rel="noopener" title="Open">↗</a>` : ''}</span></label>
     </div>
     ${p.source ? `<p class="proc-src">Imported from ${esc(p.source)}</p>` : ''}
-    <datalist id="procAreas">${areas.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+    ${stepOwnerLine(p)}
+    <datalist id="procAreas">${areas.map(a => `<option value="${esc(a)}">`).join('')}</datalist>${peopleList()}
     ${where.length || conns.length ? `<div class="where">
       ${where.length ? `<div class="where-row"><span class="lbl">Happens in</span>${where.map(x => `<button class="sys-chip" data-act="open-sys" data-id="${esc(x.key)}">${iniChip(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
       ${conns.length ? `<div class="where-row"><span class="lbl">Connections</span>${conns.map(f => `<button class="sys-chip conn-chip" data-act="open-flow" data-id="${esc(f.key)}" style="--mc:${methodOf(f).color}"><i></i>${esc(flowLabel(f))}</button>`).join('')}</div>` : ''}
@@ -1484,7 +1499,7 @@ drawer.addEventListener('focusout', (e) => {
     if (drawerStale) setTimeout(() => { if (!drawerHasFocus()) renderDrawer(); }, 0);
   }
   if (e.target.matches('input, textarea')) flushDebounced();
-  if (e.target.dataset.field === 'url' || e.target.dataset.sfield === 'tool') setTimeout(() => { if (!drawerHasFocus()) renderDrawer(); }, 0);
+  if (['url', 'docUrl', 'owner'].includes(e.target.dataset.field) || ['tool', 'who'].includes(e.target.dataset.sfield)) setTimeout(() => { if (!drawerHasFocus()) renderDrawer(); }, 0);
 });
 drawer.addEventListener('keydown', (e) => {
   // Cmd/Ctrl+Enter in a step adds the next one right after it
@@ -1686,6 +1701,7 @@ function openDialog(html, onSubmit) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       if (e.submitter?.value === 'cancel') { dlg.close(); return; }
+      form.dataset.submitter = e.submitter?.value || '';
       const result = onSubmit(new FormData(form), form);
       if (result === false) return;
       dlg.close();
@@ -1829,64 +1845,145 @@ searchInput.addEventListener('keydown', (e) => {
 resultsEl.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pickResult(+b.dataset.i); } });
 
 /* =====================================================================================
-   The process list: every process, grouped by area
+   The Processes page: every process the team runs, documented or not, with its owner,
+   status, systems and source document
    ===================================================================================== */
-const procMenu = $('#procMenu'), procFilter = $('#procFilter');
+const PROC_STATUS = {
+  undocumented: { label: 'Not documented yet', cls: 'empty' },
+  documented:   { label: 'Documented', cls: 'documented' },
+  review:       { label: 'Needs review', cls: 'partial' },
+};
+const procStatus = (p) => PROC_STATUS[p.status] ? p.status : stepsOf(p).some(s => s.text.trim()) ? 'documented' : 'undocumented';
+/* "Alex Hepburn / Alayna Phillips" or "Joel Paul or Alex Hepburn" → one name each. */
+const splitPeople = (v) => String(v || '').split(/\s*(?:\/|,|&|\bor\b|\band\b)\s*/i).map(x => x.trim()).filter(Boolean);
+/* Who owns what in a process: the process owner owns the whole thing, including every step
+   without an owner of its own; anyone named on a step owns that step. */
+function ownersOf(p) {
+  const m = new Map();
+  const add = (name) => m.get(name) || m.set(name, { whole: false, steps: 0 }).get(name);
+  for (const n of splitPeople(p.owner)) add(n).whole = true;
+  for (const s of stepsOf(p)) for (const n of splitPeople(s.who)) add(n).steps++;
+  return m;
+}
+function allPeople() {
+  const names = new Set();
+  for (const p of state.processes.values()) for (const n of ownersOf(p).keys()) names.add(n);
+  for (const e of [...state.systems.values(), ...state.flows.values()]) for (const n of splitPeople(e.owner)) names.add(n);
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+const peopleList = () => `<datalist id="people">${allPeople().map(n => `<option value="${esc(n)}">`).join('')}</datalist>`;
+
+const register = $('#register');
+const regF = { q: $('#regSearch'), area: $('#regArea'), owner: $('#regOwner'), system: $('#regSystem'), status: $('#regStatus') };
 function renderProcCount() {
   const n = state.processes.size;
   $('#procCount').textContent = n || '';
-  if (!procMenu.hidden) renderProcList();
+  if (!register.hidden) renderRegister();
 }
-function renderProcList() {
-  const q = procFilter.value.trim().toLowerCase();
+const fillSelect = (el, all, opts) => {
+  const v = el.value;
+  el.innerHTML = `<option value="">${esc(all)}</option>` + opts.map(([val, label]) => `<option value="${esc(val)}">${esc(label)}</option>`).join('');
+  el.value = opts.some(([val]) => val === v) ? v : '';
+};
+function renderRegister() {
+  const all = [...state.processes.values()];
+  fillSelect(regF.area, 'All areas', [...new Set(all.map(p => p.area || 'Other'))].sort().map(a => [a, a]));
+  fillSelect(regF.owner, 'Anyone', allPeople().filter(n => all.some(p => ownersOf(p).has(n))).map(n => [n, n]));
+  fillSelect(regF.system, 'Any system', [...state.systems.values()].sort((a, b) => a.name.localeCompare(b.name)).map(x => [x.key, x.name]));
+  fillSelect(regF.status, 'Any status', Object.entries(PROC_STATUS).map(([k, x]) => [k, x.label]));
+  const q = regF.q.value.trim().toLowerCase(), f = Object.fromEntries(Object.entries(regF).map(([k, el]) => [k, el.value]));
   const hit = (...xs) => !q || xs.some(x => String(x || '').toLowerCase().includes(q));
-  const list = [...state.processes.values()].filter(p => hit(p.name, p.area, p.owner, p.purpose))
-    .sort((a, b) => (a.area || '~').localeCompare(b.area || '~') || a.name.localeCompare(b.name));
+  const list = all.filter(p => hit(p.name, p.area, p.purpose, p.owner, p.source, ...stepsOf(p).flatMap(s => [s.text, s.who]))
+      && (!f.area || (p.area || 'Other') === f.area)
+      && (!f.owner || ownersOf(p).has(f.owner))
+      && (!f.system || processFootprint(p).n.has(f.system))
+      && (!f.status || procStatus(p) === f.status))
+    .sort((a, b) => (a.area || '~').localeCompare(b.area || '~') || (a.name || '~').localeCompare(b.name || '~'));
+  const counts = Object.fromEntries(Object.keys(PROC_STATUS).map(k => [k, all.filter(p => procStatus(p) === k).length]));
+  $('#regSum').textContent = `${all.length} process${all.length === 1 ? '' : 'es'}` + Object.entries(PROC_STATUS)
+    .filter(([k]) => counts[k]).map(([k, x]) => ` · ${counts[k]} ${x.label.toLowerCase()}`).join('');
+  const filtered = Object.values(f).some(Boolean);
+  $('#regClear').hidden = !filtered;
   const groups = new Map();
   for (const p of list) (groups.get(p.area || 'Other') || groups.set(p.area || 'Other', []).get(p.area || 'Other')).push(p);
-  $('#procList').innerHTML = !state.processes.size
-    ? `<div class="r-empty">No processes yet. Add one, or import instructions from a file.</div>`
-    : !list.length ? `<div class="r-empty">Nothing matches “${esc(procFilter.value)}”.</div>`
-    : [...groups].map(([area, ps]) => `<h4>${esc(area)}</h4>` + ps.map(p => {
-      const fp = processFootprint(p), n = stepsOf(p).length;
-      return `<button data-proc="${esc(p.key)}" class="${sel?.type === 'process' && sel.id === p.key ? 'active' : ''}">
-        <span class="ini proc-ini">${procIcon(12)}</span>
-        <span class="pl-main"><span class="pl-name">${esc(p.name || 'Untitled process')}</span>
-        <span class="pl-sub">${n} step${n === 1 ? '' : 's'} · ${fp.n.size} system${fp.n.size === 1 ? '' : 's'}${p.frequency ? ' · ' + esc(p.frequency) : ''}</span></span></button>`;
-    }).join('')).join('');
+  const row = (p) => {
+    const st = PROC_STATUS[procStatus(p)], fp = processFootprint(p), n = stepsOf(p).length, owners = ownersOf(p);
+    const systems = [...fp.n].map(sysOf).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+    const stepOwners = [...owners].filter(([, o]) => !o.whole && o.steps).map(([name]) => name);
+    let owner;
+    if (f.owner && !owners.get(f.owner)?.whole) {
+      const k = owners.get(f.owner).steps;
+      owner = `<span class="rg-own">${esc(f.owner)}</span><span class="rg-sub">${k} step${k === 1 ? '' : 's'}${p.owner ? ` · process: ${esc(p.owner)}` : ''}</span>`;
+    } else {
+      owner = p.owner ? `<span class="rg-own">${esc(p.owner)}</span>` : `<span class="rg-none">No owner</span>`;
+      if (stepOwners.length) owner += `<span class="rg-sub" title="${esc(stepOwners.join(', '))}">+ ${stepOwners.length} step owner${stepOwners.length === 1 ? '' : 's'}</span>`;
+    }
+    const url = /^https?:\/\//i.test(p.docUrl) ? p.docUrl : '';
+    const doc = url ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(p.source || url)}">Open ↗</a>`
+      : p.source ? `<span class="rg-sub" title="No link yet">${esc(p.source)}</span>` : '<span class="rg-none">—</span>';
+    return `<tr data-proc="${esc(p.key)}" tabindex="0">
+      <td class="rg-name"><span class="rg-title">${esc(p.name || 'Untitled process')}</span>${p.purpose ? `<span class="rg-sub">${esc(p.purpose.length > 120 ? p.purpose.slice(0, 117).trimEnd() + '…' : p.purpose)}</span>` : ''}</td>
+      <td><span class="badge ${st.cls}">${esc(st.label)}</span></td>
+      <td class="rg-owner">${owner}</td>
+      <td>${esc(p.frequency) || '<span class="rg-none">—</span>'}</td>
+      <td class="rg-sys" title="${esc(systems.map(x => x.name).join(', '))}">${systems.slice(0, 6).map(x => iniChip(x)).join('')}${systems.length > 6 ? `<span class="rg-sub">+${systems.length - 6}</span>` : ''}${systems.length ? '' : '<span class="rg-none">—</span>'}</td>
+      <td class="rg-num">${n || '<span class="rg-none">—</span>'}</td>
+      <td class="rg-doc">${doc}</td>
+    </tr>`;
+  };
+  $('#regBody').innerHTML = !all.length
+    ? `<tr><td colspan="7" class="rg-empty">No processes yet. Add every process the team runs, even before it's written up, or import instructions from a file.</td></tr>`
+    : !list.length ? `<tr><td colspan="7" class="rg-empty">No processes match these filters.</td></tr>`
+    : [...groups].map(([area, ps]) => `<tr class="rg-area"><th colspan="7">${esc(area)}<span>${ps.length}</span></th></tr>` + ps.map(row).join('')).join('');
 }
-function toggleProcMenu(open = procMenu.hidden) {
-  procMenu.hidden = !open;
-  $('#procBtn').setAttribute('aria-expanded', open);
-  if (open) {
-    const r = $('#procBtn').getBoundingClientRect();
-    procMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - procMenu.offsetWidth - 8)) + 'px';
-    procFilter.value = ''; renderProcList(); procFilter.focus();
-  }
+function openRegister(open = true) {
+  register.hidden = !open;
+  $('#procBtn').setAttribute('aria-pressed', open);
+  if (open) { renderRegister(); regF.q.focus(); }
 }
-$('#procBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleProcMenu(); });
-document.addEventListener('click', (e) => { if (!procMenu.hidden && !procMenu.contains(e.target)) toggleProcMenu(false); });
-procFilter.addEventListener('input', renderProcList);
-procFilter.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.stopPropagation(); toggleProcMenu(false); }
-  else if (e.key === 'Enter') { e.preventDefault(); $('#procList [data-proc]')?.click(); }
+$('#procBtn').addEventListener('click', () => openRegister(register.hidden));
+Object.values(regF).forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', renderRegister));
+$('#regClear').addEventListener('click', () => { Object.values(regF).forEach(el => { el.value = ''; }); renderRegister(); });
+register.addEventListener('click', (e) => {
+  if (e.target.closest('a')) return;
+  const act = e.target.closest('[data-ract]')?.dataset.ract;
+  if (act === 'close') return openRegister(false);
+  if (act === 'new') return newProcess();
+  if (act === 'import') return pickImportFile();
+  const tr = e.target.closest('tr[data-proc]');
+  if (tr) { openRegister(false); select('process', tr.dataset.proc); }
 });
-procMenu.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-proc], [data-pact]');
-  if (!b) return;
-  toggleProcMenu(false);
-  if (b.dataset.proc) select('process', b.dataset.proc);
-  else if (b.dataset.pact === 'new') newProcess();
-  else if (b.dataset.pact === 'import') pickImportFile();
+register.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches('tr[data-proc]')) e.target.click();
 });
 
-function newProcess() {
-  const p = { key: rid('proc'), name: '', area: '', purpose: '', frequency: '', owner: '', source: '',
-    sections: [{ id: rid('sec'), title: 'Steps', steps: [] }], reference: [] };
+/* Quick to add, so the list can hold every process before anyone has written it up. */
+async function newProcess() {
+  const areas = [...new Set([...state.processes.values()].map(p => p.area).filter(Boolean))].sort();
+  const values = await openDialog(`<form method="dialog">
+    <h2>Add a process</h2>
+    <p class="d-sub">Add it now even if it isn't written up yet. You can add the steps later, or send the document to be imported.</p>
+    <label class="fld"><span>Name</span><input name="name" required autofocus maxlength="120" placeholder="e.g. Quarterly 990 prep"></label>
+    <div class="fld-row">
+      <label class="fld"><span>Area</span><input name="area" list="newAreas" placeholder="e.g. Month close"></label>
+      <label class="fld"><span>Owner</span><input name="owner" list="people" placeholder="Who's accountable"></label>
+    </div>
+    <datalist id="newAreas">${areas.map(a => `<option value="${esc(a)}">`).join('')}</datalist>${peopleList()}
+    <div class="fld-row">
+      <label class="fld"><span>How often</span><select name="frequency">${FREQUENCIES.map(q => `<option value="${esc(q)}">${q || 'Not set'}</option>`).join('')}</select></label>
+      <label class="fld"><span>Status</span><select name="status">${Object.entries(PROC_STATUS).map(([k, x]) => `<option value="${k}">${esc(x.label)}</option>`).join('')}</select></label>
+    </div>
+    <label class="fld"><span>Link to the document <span style="font-weight:400">(optional)</span></span><input name="docUrl" type="url" placeholder="https://docs.google.com/…"></label>
+    <div class="d-actions"><button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn" value="open">Add and open</button><button class="btn primary" value="ok">Add</button></div>
+  </form>`, (fd, form) => ({ ...Object.fromEntries(['name', 'area', 'owner', 'frequency', 'status', 'docUrl'].map(k => [k, String(fd.get(k) || '').trim()])), open: form.dataset.submitter === 'open' }));
+  if (!values?.name) return;
+  const { open, ...v } = values;
+  const p = { key: rid('proc'), purpose: '', source: '', ...v, sections: [{ id: rid('sec'), title: 'Steps', steps: [] }], reference: [] };
   createEntity('processes', p);
   renderProcCount();
-  select('process', p.key, { focus: false });
-  $('input.dr-title', drawer)?.focus();
+  toast(`${p.name} added.`);
+  if (open) { openRegister(false); select('process', p.key); }
 }
 
 /* =====================================================================================
@@ -2080,7 +2177,7 @@ async function importDialog(pack, fileName) {
 
 function afterImport(plan, msg) {
   const ps = [...plan.processes, ...plan.replaces];
-  toast(msg, { ms: 9000, action: ps.length ? { label: ps.length === 1 ? 'Open it' : 'Show processes', fn: () => ps.length === 1 ? select('process', ps[0].key) : toggleProcMenu(true) } : null });
+  toast(msg, { ms: 9000, action: ps.length ? { label: ps.length === 1 ? 'Open it' : 'Show processes', fn: () => ps.length === 1 ? select('process', ps[0].key) : openRegister(true) } : null });
   if (plan.systems.length && !sel) fitAll();
 }
 
@@ -2190,7 +2287,9 @@ menu.addEventListener('click', (e) => {
    Wiring
    ===================================================================================== */
 $('#addSystemBtn').addEventListener('click', () => newSystem());
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !procMenu.hidden) { e.stopPropagation(); toggleProcMenu(false); } }, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !register.hidden && !dialogOpen()) { e.stopPropagation(); openRegister(false); }
+}, true);
 $('#emptyAdd').addEventListener('click', () => newSystem());
 $('#addFlowBtn').addEventListener('click', () => newConnection(sel?.type === 'system' ? { from: sel.id } : {}));
 $('#zoomIn').addEventListener('click', () => zoomAnimated(1.25));

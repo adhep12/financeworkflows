@@ -42,7 +42,8 @@ New systems are placed beside a system they connect to. Drag them anywhere after
   ],
   "processes": [
     { "key": "proc-eft-donations", "name": "EFT donations", "area": "Gifts & donations",
-      "frequency": "Daily", "owner": "", "purpose": "…", "source": "EFT_Process_Guide.docx",
+      "frequency": "Daily", "owner": "Alex Hepburn", "status": "documented", "purpose": "…",
+      "source": "EFT_Process_Guide.docx", "docUrl": "https://docs.google.com/…",
       "sections": [
         { "title": "Daily: find and enter new gifts",
           "steps": [ { "text": "…", "who": "Alex Hepburn",
@@ -66,6 +67,11 @@ New systems are placed beside a system they connect to. Drag them anywhere after
 - Connection step `kind`: `export`, `transform`, `check`, `import`, `other`.
 - `frequency`: `Daily`, `Weekly`, `Bi-weekly`, `Semi-monthly`, `Monthly`, `Quarterly`,
   `Annually`, `As received`, `Ad hoc`.
+- A process's `owner` is accountable for the whole process. A step's `who` is that step's
+  owner; leave it out when the process owner does it. Several people: `"Alex Hepburn / Joel Paul"`.
+- `status`: `undocumented`, `documented`, `review`. Left out, it's `documented` once there are
+  steps. A process with only a name, owner and `docUrl` is fine: it lists a process that hasn't
+  been written up yet.
 - `reference` tables are read-only in the app. They suit lookup tables (portals, keyword lists,
   links). Web addresses in them become links.
 

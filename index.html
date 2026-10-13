@@ -479,24 +479,8 @@
   /* ---------- Processes ---------- */
   .pcount { font-size: 11px; color: var(--ink-faint); font-weight: 500; }
   .pcount:empty { display: none; }
-  .proc-menu { right: auto; left: auto; width: 360px; padding: 8px; }
-  .proc-menu input {
-    width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel-2); outline: none; margin-bottom: 6px;
-  }
-  .proc-menu input:focus { border-color: var(--focus); background: var(--panel); }
-  .proc-list { max-height: min(420px, 60vh); overflow: auto; }
-  .proc-list h4 { margin: 8px 6px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); font-weight: 600; }
-  .proc-list button { display: flex; align-items: center; gap: 10px; }
-  .proc-list button.active { background: var(--muted-bg); }
-  .proc-list .r-empty { padding: 10px; color: var(--ink-faint); font-size: 13px; }
-  .pl-main { min-width: 0; }
-  .pl-name { display: block; font-weight: 500; }
-  .pl-sub { display: block; font-size: 11.5px; color: var(--ink-faint); }
-  .proc-foot { display: flex; gap: 6px; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
-  .proc-foot .btn { flex: 1; justify-content: center; }
   .proc-ini { background: var(--accent); color: var(--accent-ink) !important; }
-  .proc-menu .proc-ini, .results .proc-ini { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; }
+  .results .proc-ini { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; }
   .proc-kicker { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: var(--accent); color: var(--accent-ink); }
   .proc-mark rect { fill: var(--accent); }
   .proc-mark text { fill: var(--accent-ink); font-size: 11.5px; font-weight: 600; }
@@ -517,7 +501,52 @@
   .proc-sec .sec-head:hover .sec-ctrl, .sec-ctrl:focus-within { opacity: 1; }
   .sec-add { margin-top: 14px; }
   .tl-meta.wrap { flex-wrap: wrap; }
-  .who-input { flex: 0 1 130px; width: auto; }
+  .who-input { flex: 0 1 190px; width: auto; }
+  .who-input::placeholder { color: var(--ink-faint); opacity: .75; font-style: italic; }
+  #procBtn[aria-pressed="true"] { background: var(--muted-bg); border-color: var(--line-strong); }
+
+  /* Processes page */
+  .register { position: absolute; inset: 0; z-index: 15; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  .reg-head { display: flex; align-items: center; gap: 10px; padding: 18px 24px 10px; flex-wrap: wrap; }
+  .reg-head h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+  .reg-sum { color: var(--ink-faint); font-size: 13px; }
+  .reg-head .spacer { flex: 1; }
+  .reg-filters { display: flex; gap: 8px; padding: 0 24px 12px; flex-wrap: wrap; align-items: center; }
+  .reg-filters input, .reg-filters select {
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); outline: none; font-size: 13px;
+  }
+  .reg-filters input { width: 240px; }
+  .reg-filters input:focus, .reg-filters select:focus { border-color: var(--focus); }
+  .reg-filters button { border: 0; background: none; color: var(--focus); font-size: 13px; }
+  .reg-wrap { flex: 1; overflow: auto; padding: 0 24px 24px; }
+  table.reg { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+  table.reg thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); text-align: left; font-size: 11.5px; font-weight: 600; color: var(--ink-faint); padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.reg thead th:first-child { border-top-left-radius: 12px; }
+  table.reg thead th:last-child { border-top-right-radius: 12px; }
+  table.reg td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.reg tr[data-proc] { cursor: pointer; }
+  table.reg tr[data-proc]:hover td { background: var(--panel-2); }
+  table.reg tr[data-proc]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .rg-area th { text-align: left; padding: 14px 12px 6px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); border-bottom: 1px solid var(--line); background: var(--panel); }
+  .rg-area th span { margin-left: 8px; color: var(--ink-faint); font-weight: 400; }
+  .rg-name { min-width: 240px; max-width: 420px; }
+  .rg-title { display: block; font-weight: 600; }
+  .rg-sub { display: block; font-size: 12px; color: var(--ink-faint); }
+  .rg-none { color: var(--ink-faint); }
+  .rg-own { display: block; white-space: nowrap; }
+  .rg-owner { min-width: 150px; }
+  .rg-sys { white-space: nowrap; }
+  .rg-sys .ini { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 9.5px; font-weight: 700; margin-right: 3px; }
+  .rg-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rg-doc a { color: var(--focus); text-decoration: none; white-space: nowrap; }
+  .rg-doc a:hover { text-decoration: underline; }
+  .rg-doc .rg-sub { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rg-empty { text-align: center; color: var(--ink-faint); padding: 40px 12px !important; }
+  @media (max-width: 760px) {
+    .reg-head, .reg-filters { padding-left: 12px; padding-right: 12px; }
+    .reg-wrap { padding: 0 12px 12px; }
+    .reg-filters input { width: 100%; }
+  }
   .sys-select { color: var(--ink-soft); font-weight: 500; max-width: 170px; }
   .link-select {
     flex: 1; min-width: 0; border: 1px solid transparent; border-radius: 6px; background: none;
@@ -686,7 +715,7 @@
       <div class="results" id="results" hidden></div>
     </div>
     <div class="actions">
-      <button class="btn" id="procBtn" title="Step-by-step processes" aria-haspopup="true" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="lbl">Processes</span><span class="pcount" id="procCount"></span></button>
+      <button class="btn" id="procBtn" title="Every process, with owners and step-by-step instructions" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="lbl">Processes</span><span class="pcount" id="procCount"></span></button>
       <button class="btn" id="addSystemBtn" title="Add a system"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">System</span></button>
       <button class="btn primary" id="addFlowBtn" title="Add a connection between two systems"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 12h13M13 6l6 6-6 6"/></svg><span class="lbl">Connection</span></button>
       <button class="icon-btn" id="menuBtn" aria-label="More" aria-haspopup="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
@@ -700,14 +729,6 @@
       <button data-menu="export" role="menuitem">Export as JSON<span class="m-sub">Download a backup of the whole map</span></button>
       <button data-menu="refresh" role="menuitem">Refresh<span class="m-sub">Pull in edits from teammates</span></button>
       <button data-menu="live" role="menuitem">Live connection status<span class="m-sub">Who the app can see right now</span></button>
-    </div>
-    <div class="menu proc-menu" id="procMenu" hidden>
-      <input id="procFilter" type="search" placeholder="Find a process" autocomplete="off" aria-label="Find a process">
-      <div class="proc-list" id="procList"></div>
-      <div class="proc-foot">
-        <button class="btn sm" data-pact="new">+ New process</button>
-        <button class="btn sm" data-pact="import">Import from a file…</button>
-      </div>
     </div>
   </header>
   <div class="banner" id="banner" hidden></div>
@@ -768,6 +789,30 @@
         <button class="btn primary" id="emptyAdd">Add a system</button>
       </div>
     </div>
+
+    <section class="register" id="register" hidden aria-label="Processes">
+      <div class="reg-head">
+        <h2>Processes</h2><span class="reg-sum" id="regSum"></span>
+        <span class="spacer"></span>
+        <button class="btn" data-ract="import">Import from a file…</button>
+        <button class="btn primary" data-ract="new">+ Add a process</button>
+        <button class="icon-btn" data-ract="close" aria-label="Back to the map" title="Back to the map (Esc)">✕</button>
+      </div>
+      <div class="reg-filters">
+        <input id="regSearch" type="search" placeholder="Find a process or step" autocomplete="off" aria-label="Find a process">
+        <select id="regArea" aria-label="Area"></select>
+        <select id="regOwner" aria-label="Owner"></select>
+        <select id="regSystem" aria-label="System"></select>
+        <select id="regStatus" aria-label="Status"></select>
+        <button id="regClear" hidden>Clear filters</button>
+      </div>
+      <div class="reg-wrap">
+        <table class="reg">
+          <thead><tr><th>Process</th><th>Status</th><th>Owner</th><th>How often</th><th>Systems</th><th class="rg-num">Steps</th><th>Document</th></tr></thead>
+          <tbody id="regBody"></tbody>
+        </table>
+      </div>
+    </section>
 
     <aside class="drawer" id="drawer" aria-label="Details">
       <div class="dr-scroll" id="drScroll"></div>
