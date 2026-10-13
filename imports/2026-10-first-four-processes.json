@@ -1,0 +1,1765 @@
+{
+ "format": "finflow-import",
+ "version": 1,
+ "name": "EFT donations, check gifts, budget upload and month-end close",
+ "systems": [
+  {
+   "key": "sys-cass",
+   "name": "Cass Bank",
+   "category": "banking",
+   "match": [
+    "Cass",
+    "Cass online banking"
+   ],
+   "description": "Operating account, incoming wires (EFT gifts) and remote check deposit (Cass Deposit)."
+  },
+  {
+   "key": "sys-banks",
+   "name": "Other bank & investment accounts",
+   "category": "banking",
+   "description": "KeyBank Money Market and Checking, Stripe, PayPal, Wise, Fidelity – Delap Wealth Advisory, Invest – Tschetter Group."
+  },
+  {
+   "key": "sys-salesforce",
+   "name": "Salesforce",
+   "category": "giving",
+   "match": [
+    "Salesforce NPSP",
+    "SF"
+   ],
+   "description": "Donor records and gifts: Gift Entry batches (EFT, Misc, check deposits) and NPSP Data Imports."
+  },
+  {
+   "key": "sys-gift-portals",
+   "name": "DAF & giving portals",
+   "category": "giving",
+   "description": "Where electronic gifts are disbursed from: Renaissance, Bonterra (Cybergrants), YourCause, Chariot, Benevity, FrontStream, NCF, Overflow, United Way and others. Logins in Bitwarden (Shared-Financial)."
+  },
+  {
+   "key": "sys-finance-inbox",
+   "name": "Finance inbox",
+   "category": "other",
+   "match": [
+    "Finance Gmail",
+    "Gmail"
+   ],
+   "description": "Gift notification emails. Labels track each gift: Awaiting, Downloaded, Entered, Imported / To Be Imported."
+  },
+  {
+   "key": "sys-gdrive",
+   "name": "Google Drive",
+   "category": "spreadsheet",
+   "match": [
+    "Google Sheets",
+    "Shared Drive"
+   ],
+   "description": "Gift support (Finance Documents → EFT), deposit notes and support, the Deposit Count sheet, and the NCF and Fidelity import templates."
+  },
+  {
+   "key": "sys-mailroom",
+   "name": "Mail & PO Box",
+   "category": "other",
+   "match": [
+    "Mailroom"
+   ],
+   "description": "Checks and donor mail: the mailroom downstairs and PO Box 14278, Portland."
+  },
+  {
+   "key": "sys-patreon",
+   "name": "Patreon",
+   "category": "giving",
+   "description": "Gift disbursements, sent to Salesforce by API."
+  },
+  {
+   "key": "sys-looker",
+   "name": "Looker",
+   "category": "reporting",
+   "description": "Revenue reporting, checked against the P&L each month."
+  },
+  {
+   "key": "sys-inventory",
+   "name": "Inventory partners",
+   "category": "other",
+   "description": "Renewal Logistics, Koorong and 10ofThose inventory reports."
+  },
+  {
+   "key": "sys-fixed-assets",
+   "name": "Fixed Asset Listing",
+   "category": "spreadsheet",
+   "match": [
+    "Fixed Asset Listing.xlsx"
+   ],
+   "description": "Fixed Asset Listing.xlsx: the fixed asset register and depreciation."
+  },
+  {
+   "key": "sys-payroll",
+   "name": "Payroll register",
+   "category": "payroll",
+   "description": "Final payroll register for each pay period end (the 15th and the last day of the month), including 401k."
+  }
+ ],
+ "connections": [
+  {
+   "key": "c-eft-portal-sf",
+   "from": "sys-gift-portals",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "manual",
+   "name": "EFT gifts (DAF & matching)",
+   "frequency": "Daily",
+   "description": "Donor details from each giving portal, typed into the week's Salesforce EFT batch.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "Spot the gift as an incoming wire in Cass online banking and match the bank display name to its portal (EFT source table)",
+     "tool": "Cass online banking"
+    },
+    {
+     "kind": "export",
+     "text": "Log in to the portal (Bitwarden, Shared-Financial; complete 2FA) and screenshot or download the donor details",
+     "tool": "Bitwarden"
+    },
+    {
+     "kind": "import",
+     "text": "Enter each gift in the Salesforce EFT batch: Payment Method Wire, Donor Advised = the DAF name",
+     "tool": "Salesforce Gift Entry"
+    },
+    {
+     "kind": "other",
+     "text": "Save the screenshot or export to Google Drive → Finance Documents → EFT → [Thursday date], named source + amount (e.g. “ren 100”)",
+     "tool": "Google Drive"
+    }
+   ]
+  },
+  {
+   "key": "c-eft-email-sf",
+   "from": "sys-finance-inbox",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Email-only EFT gifts",
+   "frequency": "Daily",
+   "description": "Gifts whose donor details only come by email (Signatry, Thrivent, PCA, Bright Funds, Cru, bill pay, Chariot notifications…).",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "Find the gift email; label it Awaiting until the EFT shows in the bank",
+     "tool": "Finance inbox"
+    },
+    {
+     "kind": "export",
+     "text": "Take the donor details from the email body or attachment (screenshot or download)",
+     "tool": ""
+    },
+    {
+     "kind": "import",
+     "text": "Enter the gift in the EFT batch (bill pay from iPay Solutions or Allied Payment goes in the Misc batch)",
+     "tool": "Salesforce Gift Entry"
+    },
+    {
+     "kind": "other",
+     "text": "Relabel the email Entered; archive only after the batch is tied out",
+     "tool": "Finance inbox"
+    }
+   ]
+  },
+  {
+   "key": "c-eft-tieout",
+   "from": "sys-cass",
+   "to": "sys-salesforce",
+   "kind": "reconcile",
+   "method": "manual",
+   "name": "Weekly EFT & Misc batch tie-out",
+   "frequency": "Weekly",
+   "description": "Every Thursday the open EFT and Misc batches are tied to the Incoming Wires CSV (Friday–Thursday) before they are processed.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Export the Incoming Wires CSV for the batch period (usually Friday–Thursday)",
+     "tool": "Cass online banking"
+    },
+    {
+     "kind": "transform",
+     "text": "Strike out lines not in the EFT batch: Amazon royalties, NCF, Fidelity, iPay Solutions, Allied Payment, Overflow, Patreon, one-offs",
+     "tool": "Incoming Wires CSV"
+    },
+    {
+     "kind": "check",
+     "text": "Sum what is left: it must equal the EFT batch total. If not, compare line by line before processing",
+     "tool": ""
+    },
+    {
+     "kind": "import",
+     "text": "Process the EFT batch; archive the emails labelled Entered",
+     "tool": "Salesforce"
+    },
+    {
+     "kind": "check",
+     "text": "Same for the Misc batch, summing only its lines (bill pay, Overflow stock, one-off electronic gifts), then process it",
+     "tool": "Salesforce"
+    }
+   ]
+  },
+  {
+   "key": "c-ncf-sf",
+   "from": "sys-gift-portals",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "import",
+   "name": "NCF gifts import",
+   "frequency": "As received",
+   "description": "National Christian Foundation gifts are imported through the NPSP importer, not entered by hand or added to the EFT batch.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "NCF Charity Portal: “Last 30 days” → Export to Excel",
+     "tool": "NCF Charity Portal"
+    },
+    {
+     "kind": "transform",
+     "text": "Paste gifts not yet entered into a dated copy of “NCF Import - Template with Dup Matching” (Raw File - NCF tab); update SF Reference IDs",
+     "tool": "Google Sheets"
+    },
+    {
+     "kind": "export",
+     "text": "Download the “Dup match - Template for NPSP Importer Tool” tab as CSV, after deleting ALL rows below the last patron",
+     "tool": "Google Sheets"
+    },
+    {
+     "kind": "import",
+     "text": "NPSP Data Imports → Import: map Donation DAF, leave the last 2 columns unmapped, Begin Data Import Process",
+     "tool": "Salesforce NPSP Data Import"
+    }
+   ]
+  },
+  {
+   "key": "c-fidelity-sf",
+   "from": "sys-finance-inbox",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "import",
+   "name": "Fidelity gifts import",
+   "frequency": "As received",
+   "description": "Fidelity gifts arrive by secure email and are imported through the NPSP importer, not entered by hand.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Open the FIDELITYSECURE email with the access code and get the gift file",
+     "tool": "Finance inbox"
+    },
+    {
+     "kind": "transform",
+     "text": "Paste the gifts into a dated copy of “Fidelity Import - Template with Dup Matching”; remove emails from address columns, merge unit numbers into Acknowledgement Address Line 1; update SF Reference IDs",
+     "tool": "Google Sheets"
+    },
+    {
+     "kind": "export",
+     "text": "Download the “Dup match - Template for NPSP Importer Tool” tab as CSV, after deleting ALL rows below the last patron",
+     "tool": "Google Sheets"
+    },
+    {
+     "kind": "import",
+     "text": "Import through NPSP Data Imports, as for NCF",
+     "tool": "Salesforce NPSP Data Import"
+    }
+   ]
+  },
+  {
+   "key": "c-chariot-cass",
+   "from": "sys-gift-portals",
+   "to": "sys-cass",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Chariot disbursement",
+   "frequency": "Weekly",
+   "description": "Chariot gifts (Daffy, GiveClear, Groundswell) only reach the bank after someone moves the funds in the Chariot portal.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "other",
+     "text": "Log in to the Chariot portal (Bitwarden, Shared-Financial; Google Authenticator) and click “Move funds”",
+     "tool": "Chariot"
+    },
+    {
+     "kind": "check",
+     "text": "Next business day: confirm the EFT in the bank matches what was entered in Salesforce",
+     "tool": "Cass online banking"
+    }
+   ]
+  },
+  {
+   "key": "c-patreon-sf",
+   "from": "sys-patreon",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "api",
+   "name": "Patreon gifts",
+   "frequency": "",
+   "description": "Patreon gift disbursements reach Salesforce through an API. Nothing to enter, and they are left out of the EFT batch tie-out.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "other",
+     "text": "Gift disbursements sync to Salesforce automatically through the API",
+     "tool": ""
+    }
+   ]
+  },
+  {
+   "key": "c-giving-bulk-sf",
+   "from": "sys-gift-portals",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "import",
+   "name": "Bulk uploads: Benevity, GCF, Stewardship",
+   "frequency": "Monthly",
+   "description": "Month-close bulk gift uploads into Salesforce.",
+   "owner": "Alex Hepburn",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Download the Benevity gift file",
+     "tool": "Benevity"
+    },
+    {
+     "kind": "export",
+     "text": "GCF: ask by email for the “reimbursement” and submit expenses, then download",
+     "tool": "GCF"
+    },
+    {
+     "kind": "export",
+     "text": "Stewardship: Macenzie or Joel asks for the disbursement by email before a download is available",
+     "tool": "Stewardship"
+    },
+    {
+     "kind": "import",
+     "text": "Import the bulk uploads into Salesforce",
+     "tool": "Salesforce"
+    }
+   ]
+  },
+  {
+   "key": "c-checks-cass",
+   "from": "sys-mailroom",
+   "to": "sys-cass",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Check deposits (Cass Deposit)",
+   "frequency": "As received",
+   "description": "Checks from the mail, counted, scanned and deposited into the Operating Account.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "Open and sort the mail: donations (one pile per month), deposit support, deposit notes, other",
+     "tool": ""
+    },
+    {
+     "kind": "transform",
+     "text": "Count the checks in a new tab of the Deposit Count Google Sheet",
+     "tool": "Deposit Count sheet"
+    },
+    {
+     "kind": "import",
+     "text": "Scan the checks in Cass Deposit into the Operating Account, with the deposit total as the control amount (one deposit per month)",
+     "tool": "Cass Deposit"
+    },
+    {
+     "kind": "export",
+     "text": "Save “Deposit Image: Front Only” as e.g. “1.26.23 January DepositImageFrontOnly”",
+     "tool": "Cass Deposit"
+    }
+   ]
+  },
+  {
+   "key": "c-checks-sf",
+   "from": "sys-mailroom",
+   "to": "sys-salesforce",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Check gifts",
+   "frequency": "As received",
+   "description": "Each deposited check entered as a gift in a Salesforce batch named for the deposit.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "other",
+     "text": "Gift Entry → New Batch → Check/NCF Entry; Batch Name “1/26/2023 Deposit”, Expected Total = the deposit total",
+     "tool": "Salesforce Gift Entry"
+    },
+    {
+     "kind": "import",
+     "text": "Enter each check: Contact1 or Account1, linked donor, amount, date of the check; Donor Advised or QCD account when it applies",
+     "tool": "Salesforce Gift Entry"
+    },
+    {
+     "kind": "check",
+     "text": "Total entered equals the deposit control amount; screenshot the matching totals",
+     "tool": "Salesforce"
+    }
+   ]
+  },
+  {
+   "key": "c-mail-drive",
+   "from": "sys-mailroom",
+   "to": "sys-gdrive",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Deposit support & notes",
+   "frequency": "As received",
+   "description": "Scanned deposit support and donor notes, filed in Drive for the Patron team.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Scan Deposit Support (by month) and Deposit Notes on the Epson scanner",
+     "tool": "Epson scanner"
+    },
+    {
+     "kind": "import",
+     "text": "Upload to the deposit notes & support folder in Google Drive",
+     "tool": "Google Drive"
+    },
+    {
+     "kind": "other",
+     "text": "Post in the Patron Slack channel that they are ready, calling out anything that needs attention",
+     "tool": "Slack"
+    }
+   ]
+  },
+  {
+   "key": "c-budget-acumatica",
+   "from": "sys-budgyt",
+   "to": "sys-acumatica",
+   "kind": "flow",
+   "method": "import",
+   "name": "Annual budget (Mass Budget Import)",
+   "frequency": "Annually",
+   "description": "The finalized budget exported from Budgyt, reshaped to Acumatica accounts and subaccounts, and imported as department budgets.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "No blank grants: run a P&L of blank grants in Budgyt and fix them (inactive grants just silently don’t import)",
+     "tool": "Budgyt"
+    },
+    {
+     "kind": "export",
+     "text": "Export for the GL: Periods as Columns, Exclude rows with zero, Include Grants, Summarized, Importable File",
+     "tool": "Budgyt"
+    },
+    {
+     "kind": "transform",
+     "text": "Account = left 4 digits; Subaccount = 3-digit department + “-” + 3-digit grant; delete balance sheet and auto lines; revenue positive",
+     "tool": "Excel"
+    },
+    {
+     "kind": "check",
+     "text": "All expenses tie to Budgyt",
+     "tool": "Excel"
+    },
+    {
+     "kind": "import",
+     "text": "Mass Budget Import → “+” → upload, check, release",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Approve, then release, the Department Budgets — only when 100% confident",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-cass-acu-rec",
+   "from": "sys-cass",
+   "to": "sys-acumatica",
+   "kind": "reconcile",
+   "method": "manual",
+   "name": "Bank reconciliation: Cass",
+   "frequency": "Monthly",
+   "description": "Cass Operating, Certificate of Deposit and ICS accounts reconciled to the GL at month close.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "import",
+     "text": "Prepare JREs for interest, gains/losses and final costs; the other person releases them",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Release the bank rec",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Confirm the bank statement is uploaded into Acumatica",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-banks-acu-rec",
+   "from": "sys-banks",
+   "to": "sys-acumatica",
+   "kind": "reconcile",
+   "method": "manual",
+   "name": "Bank & investment reconciliations",
+   "frequency": "Monthly",
+   "description": "KeyBank, Stripe, PayPal, Wise, Fidelity – Delap and Tschetter accounts reconciled to the GL at month close.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Pull statements (Macenzie or Joel pulls NCF and Hedge Pangea)",
+     "tool": ""
+    },
+    {
+     "kind": "import",
+     "text": "Prepare JREs for interest, gains/losses and final costs; the other person releases them",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Release the bank rec and confirm each statement is uploaded into Acumatica",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-inventory-acu",
+   "from": "sys-inventory",
+   "to": "sys-acumatica",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Inventory tie-out & JREs",
+   "frequency": "Monthly",
+   "description": "Partner inventory reports tied out each month and booked as JREs.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "export",
+     "text": "Renewal Logistics reports to the Slack Finance channel 2 business days after month end; pull Koorong and 10ofThose reports",
+     "tool": "Slack"
+    },
+    {
+     "kind": "transform",
+     "text": "Prepare the monthly inventory tie-out and JREs",
+     "tool": "Excel"
+    },
+    {
+     "kind": "import",
+     "text": "Reclassify merchandise into specific teams in Acumatica",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Review and release the JRE",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-fa-acu",
+   "from": "sys-fixed-assets",
+   "to": "sys-acumatica",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Fixed asset depreciation",
+   "frequency": "Monthly",
+   "description": "Depreciation from the fixed asset listing, entered as a JRE.",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "transform",
+     "text": "Prepare and update “Fixed Asset Listing.xlsx”",
+     "tool": "Excel"
+    },
+    {
+     "kind": "import",
+     "text": "Enter the FA depreciation JRE",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Review and release the JRE",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-payroll-acu",
+   "from": "sys-payroll",
+   "to": "sys-acumatica",
+   "kind": "flow",
+   "method": "manual",
+   "name": "Payroll & 401k entries",
+   "frequency": "Semi-monthly",
+   "description": "Payroll and 401k entries for each pay period end (the 15th and the last day of the month).",
+   "owner": "",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "Review the final payroll register: department and account codes, amounts, staff changes, 401k, benefits, deductions",
+     "tool": ""
+    },
+    {
+     "kind": "import",
+     "text": "Prepare the payroll & 401k entries (Joel Paul); reviewed by Macenzie Woodman",
+     "tool": "Acumatica"
+    },
+    {
+     "kind": "check",
+     "text": "Make sure the balance sheet agrees",
+     "tool": "Acumatica"
+    }
+   ]
+  },
+  {
+   "key": "c-looker-acu",
+   "from": "sys-looker",
+   "to": "sys-acumatica",
+   "kind": "reconcile",
+   "method": "manual",
+   "name": "Revenue reasonableness check",
+   "frequency": "Monthly",
+   "description": "Looker revenue compared with the P&L at month close.",
+   "owner": "Joel Paul",
+   "steps": [
+    {
+     "kind": "check",
+     "text": "Check Looker revenue against the P&L for reasonableness",
+     "tool": "Looker"
+    }
+   ]
+  }
+ ],
+ "processes": [
+  {
+   "key": "proc-eft-donations",
+   "name": "EFT donations",
+   "area": "Gifts & donations",
+   "frequency": "Daily",
+   "source": "EFT_Process_Guide.docx",
+   "purpose": "Find, enter and tie out electronic gifts (DAFs, employer matches, bill pay and other EFTs) in Salesforce. Gifts are entered daily as they arrive; the EFT and Misc batches are processed every Thursday, covering Friday–Thursday. The EFT batch holds most DAF and matching gifts; the Misc batch holds bill pay, stock and one-off electronic gifts.",
+   "sections": [
+    {
+     "title": "Daily: find and enter new gifts",
+     "steps": [
+      {
+       "text": "Check the bank for incoming wires: log in to online banking, open the Incoming Wires account and pick the date range. Match each bank display name to the EFT source table below for its portal, login and email pattern (bank names are often cut short).\nNot entered in the EFT batch: Amazon royalties (not a gift), NCF and Fidelity (imported, see below), iPay Solutions and Allied Payment (Misc batch), Overflow stock gifts (Misc batch), Patreon (API) and other one-offs.",
+       "system": "sys-cass"
+      },
+      {
+       "text": "Wire from a company name that isn’t in the table? Check Bonterra (Cybergrants) → FrontDoor first: many employer matches arrive with just the company name. Use the finance@ login in Bitwarden (Shared-Financial), or clara@ if the gift isn’t found. If it isn’t in Cybergrants, investigate.",
+       "system": "sys-gift-portals"
+      },
+      {
+       "text": "Check the Finance inbox for the matching gift emails. If the EFT isn’t in the bank yet, label the email Awaiting (or mark it unread). Leave every labelled email in the inbox until the batch is tied out.",
+       "system": "sys-finance-inbox",
+       "connection": "c-eft-email-sf"
+      },
+      {
+       "text": "Get the donor details. Portal gifts: log in with Bitwarden (Shared-Financial), complete any 2FA, go to the disbursements/payments/grants page and screenshot or download the gift(s). Email-only gifts: take them from the email body or attachment. Fidelity secure email: see the Fidelity steps.",
+       "system": "sys-gift-portals",
+       "connection": "c-eft-portal-sf"
+      },
+      {
+       "text": "Create the Salesforce batch: Gift Entry → Create New Batch → “Check/NCF Entry/Next Action” template → Next. Name it for the day you’ll process it (“6.11.2026 EFTs”, or “6.11.2026 Misc” for bill pay and one-off electronic gifts) → Next.\nDefaults: Contact1; Record Type Donation; Payment Method Wire (Misc batch: Check for bill pay, PayPal for PayPal, Wire for anything by wire/ACH). Save.",
+       "system": "sys-salesforce"
+      },
+      {
+       "text": "Enter each gift. Switch to Account1 if the donor is an organization, then link the existing contact or account: search individuals by last name (or address/email if the name is common), organizations and giving funds in the Organization box. Always click “Show more results for” to check the details or create a new record. With duplicates, use the one with more contact information or more donations.\nRecord Type: Matching Donation for a company match (and fill Matching Gift Account). Amount = the total; Close Date = date received; Donor Advised = the DAF name (always, in the EFT batch).\nThen relabel the email Entered. Don’t archive it yet.",
+       "system": "sys-salesforce",
+       "connection": "c-eft-portal-sf"
+      },
+      {
+       "text": "Save the support: an Excel export, or a screenshot that shows every donor detail and the amount. Name it source + amount (“ren 100”, “cybergrants 250”) and file it in Google Drive → Finance Documents → EFT → [Thursday processing date] folder (create it if needed, e.g. “6.11.2026 EFTs”).",
+       "system": "sys-gdrive"
+      }
+     ]
+    },
+    {
+     "title": "Thursdays: tie out and process the batches",
+     "steps": [
+      {
+       "text": "In Salesforce, note the total of the open EFT batch.",
+       "system": "sys-salesforce",
+       "connection": "c-eft-tieout"
+      },
+      {
+       "text": "Export the Incoming Wires CSV from online banking for the batch period (usually Friday–Thursday, 5 business days). Strike out every line that isn’t in the EFT batch: Amazon royalties, NCF, Fidelity, iPay Solutions, Allied Payment, Overflow, Patreon and other one-offs.",
+       "system": "sys-cass",
+       "connection": "c-eft-tieout"
+      },
+      {
+       "text": "Sum the remaining lines: the total should match the EFT batch. If it doesn’t, go through the batch and the CSV line by line to find the difference before processing.",
+       "system": "sys-salesforce",
+       "connection": "c-eft-tieout"
+      },
+      {
+       "text": "Totals match: process the EFT batch in Salesforce and archive the emails labelled Entered for this batch.",
+       "system": "sys-salesforce",
+       "connection": "c-eft-tieout"
+      },
+      {
+       "text": "Do the same for the Misc batch, summing only its lines in the CSV (bill pay, Overflow stock and other one-off electronic gifts). Once it ties, process it and archive its Entered emails.",
+       "system": "sys-salesforce",
+       "connection": "c-eft-tieout"
+      }
+     ]
+    },
+    {
+     "title": "Chariot: move the funds before the EFT arrives",
+     "steps": [
+      {
+       "text": "Watch the Finance inbox for a Chariot gift notification from Daffy, GiveClear or Groundswell (all route through Chariot). Enter the gift in the EFT batch from the email and label it Entered.",
+       "system": "sys-finance-inbox",
+       "connection": "c-eft-email-sf"
+      },
+      {
+       "text": "Once a week (with the Thursday run, or as gifts build up), log in to the Chariot portal (Bitwarden, Shared-Financial; Google Authenticator) and click “Move funds”. Your disbursement is what triggers the wire, so don’t wait for it.",
+       "system": "sys-gift-portals",
+       "connection": "c-chariot-cass"
+      },
+      {
+       "text": "The EFT shows in the bank the next business day: confirm the amount matches what was entered in Salesforce.",
+       "system": "sys-cass",
+       "connection": "c-chariot-cass"
+      }
+     ]
+    },
+    {
+     "title": "NCF: import instead of entering by hand",
+     "steps": [
+      {
+       "text": "The NCF eGrants email arrives about 2 business days before the EFT. Log in to the NCF Charity Portal (Bitwarden, Shared-Financial; no 2FA), choose “Last 30 days” and Export to Excel. Label the email Imported / To Be Imported. NCF gifts never go in the EFT batch.",
+       "system": "sys-gift-portals",
+       "connection": "c-ncf-sf"
+      },
+      {
+       "text": "In the NCF folder, copy “NCF Import - Template with Dup Matching” into dated & cloned templates and name it for the donation dates. Paste the gifts not yet entered (no headers) into the “Raw File - NCF” tab, and update the SF Reference IDs as needed (see the how-to video).",
+       "system": "sys-gdrive",
+       "connection": "c-ncf-sf"
+      },
+      {
+       "text": "When every reference ID is filled in, go to the “Dup match - Template for NPSP Importer Tool” tab → File → Download CSV. Delete ALL rows below the last row of patron data first, or they import too and Michelle has to delete them. Save the file.",
+       "system": "sys-gdrive",
+       "connection": "c-ncf-sf"
+      },
+      {
+       "text": "Salesforce → NPSP Data Imports → Import. Match the first-page settings to the screenshot in the guide, upload the CSV, map the Donation DAF field to “Donation DAF” and leave the last 2 columns unmapped. Continue → Start Import → Import All Data Records → check the fields on the final screen against the guide → Begin Data Import Process. Archive the email once the import is confirmed.",
+       "system": "sys-salesforce",
+       "connection": "c-ncf-sf"
+      }
+     ]
+    },
+    {
+     "title": "Fidelity: import instead of entering by hand",
+     "steps": [
+      {
+       "text": "The FIDELITYSECURE email arrives about 1 business day before the EFT. Open it with the access code to get the donor details, and label it Imported / To Be Imported. Fidelity gifts never go in the EFT batch.",
+       "system": "sys-finance-inbox",
+       "connection": "c-fidelity-sf"
+      },
+      {
+       "text": "In the Fidelity folder, copy “Fidelity Import - Template with Dup Matching” into dated & cloned templates, named for the donation dates. Paste the gifts (no headers) from the raw file into the “Raw File - Fidelity” tab. Remove any email addresses from the address columns, combine unit/apartment numbers into “Acknowledgement Address Line 1”, and update the SF Reference IDs (see the how-to video).",
+       "system": "sys-gdrive",
+       "connection": "c-fidelity-sf"
+      },
+      {
+       "text": "“Dup match - Template for NPSP Importer Tool” tab → File → Download CSV, after deleting ALL rows below the last row of patron data. Save the file.",
+       "system": "sys-gdrive",
+       "connection": "c-fidelity-sf"
+      },
+      {
+       "text": "Import it through NPSP Data Imports exactly as for NCF (map Donation DAF, leave the last 2 columns unmapped, Begin Data Import Process). Archive the emails once the import is confirmed.",
+       "system": "sys-salesforce",
+       "connection": "c-fidelity-sf"
+      }
+     ]
+    },
+    {
+     "title": "Handled automatically",
+     "steps": [
+      {
+       "text": "Patreon gift disbursements reach Salesforce through the API. Nothing to enter, and they’re struck out of the Thursday tie-out.",
+       "system": "sys-patreon",
+       "connection": "c-patreon-sf"
+      }
+     ]
+    }
+   ],
+   "reference": [
+    {
+     "title": "EFT source table",
+     "note": "Match the bank display name (often cut short) to find the portal, login and email pattern. Unrecognized wire from a company name: check Bonterra (Cybergrants) → FrontDoor first.",
+     "columns": [
+      "Bank display name",
+      "Gift type",
+      "Portal",
+      "Credentials",
+      "2FA",
+      "Email / notification",
+      "Email timing",
+      "SF batch",
+      "SF DAF name"
+     ],
+     "rows": [
+      [
+       "Renaissance Char/",
+       "DAF",
+       "https://charitable.rengiving.com/charities/bible-project-464277592/dashboard",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~4 bus. days before EFT",
+       "EFT",
+       "Renaissance Charitable"
+      ],
+      [
+       "Morgan Stanley G/",
+       "DAF",
+       "https://charitable.rengiving.com/charities/bible-project-464277592/dashboard",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~4 bus. days before EFT",
+       "EFT",
+       "The Morgan Stanley Global Impact Funding Trust Inc"
+      ],
+      [
+       "American Endowment/",
+       "DAF",
+       "https://charitable.rengiving.com/charities/bible-project-464277592/dashboard",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~4 bus. days before EFT",
+       "EFT",
+       "American Endowment Foundation"
+      ],
+      [
+       "U.S. Charitable",
+       "DAF",
+       "https://charitable.rengiving.com/charities/bible-project-464277592/dashboard",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~4 bus. days before EFT",
+       "EFT",
+       "U.S. Charitable Gift trust"
+      ],
+      [
+       "T. Rowe Price Ch/",
+       "DAF",
+       "https://charitable.rengiving.com/charities/bible-project-464277592/dashboard",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~4 bus. days before EFT",
+       "EFT",
+       "T Rowe Price Charitable"
+      ],
+      [
+       "Cybergrants",
+       "DAF / Match",
+       "https://connect.bonterra.network/ (FrontDoor)",
+       "Bitwarden – Shared-Financial (finance@, or clara@ if not found)",
+       "No",
+       "Email + Portal",
+       "Variable",
+       "EFT",
+       "Cybergrants or Charities Aid Foundation"
+      ],
+      [
+       "Caterpillar Foun/",
+       "DAF / Match",
+       "https://connect.bonterra.network/ (FrontDoor)",
+       "Bitwarden – Shared-Financial (finance@, or clara@ if not found)",
+       "No",
+       "Email (sometimes) + Portal",
+       "Variable",
+       "EFT",
+       "Cybergrants"
+      ],
+      [
+       "Cybergrants Veri/",
+       "DAF / Match",
+       "https://connect.bonterra.network/ (FrontDoor)",
+       "Bitwarden – Shared-Financial (finance@, or clara@ if not found)",
+       "No",
+       "Email (sometimes) + Portal",
+       "Variable",
+       "EFT",
+       "Cybergrants"
+      ],
+      [
+       "JPMC FOUNDATION/",
+       "DAF / Match",
+       "https://connect.bonterra.network/ (FrontDoor)",
+       "Bitwarden – Shared-Financial (finance@, or clara@ if not found)",
+       "No",
+       "Email (sometimes) + Portal",
+       "Variable",
+       "EFT",
+       "Cybergrants"
+      ],
+      [
+       "NCF/",
+       "DAF",
+       "https://secure.ncfgiving.com/charityportal",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Email + Portal",
+       "~2 bus. days before EFT",
+       "N/A – import process (see NCF steps)",
+       "National Christian Foundation"
+      ],
+      [
+       "FIDELITY INVESTM/",
+       "DAF",
+       "Finance inbox (secure email)",
+       "Code to open secure email",
+       "N/A",
+       "Email only",
+       "~1 bus. day before EFT",
+       "N/A – import process (see Fidelity steps)",
+       "Fidelity"
+      ],
+      [
+       "SIGNATRY/",
+       "DAF",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "~1 bus. day before EFT",
+       "EFT",
+       "The Signatry"
+      ],
+      [
+       "BBGF–[company]/",
+       "DAF / Match",
+       "https://nonprofit.yourcause.com/giving/payments",
+       "Bitwarden – Shared-Financial",
+       "Yes – Google Auth",
+       "Email + Portal",
+       "~1 bus. day after EFT",
+       "EFT",
+       "Your Cause"
+      ],
+      [
+       "CHARIOT",
+       "DAF",
+       "https://dashboard.givechariot.com",
+       "Bitwarden – Shared-Financial",
+       "Yes – Google Auth",
+       "Email + Portal",
+       "Email arrives first and you must move funds (see Chariot steps); EFT hits the bank 2–3 days after the manual disbursement",
+       "EFT",
+       "Chariot"
+      ],
+      [
+       "CHC/",
+       "DAF",
+       "https://portal.chcimpact.org/partner/login",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Email + Portal",
+       "Simultaneous (email sometimes ~1 day delayed)",
+       "EFT",
+       "Creating Healthier Communities"
+      ],
+      [
+       "THRIVENT CHARITA/",
+       "DAF",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "~1 bus. day before EFT",
+       "EFT",
+       "Thrivent Charitable Impact & Investing"
+      ],
+      [
+       "THRIVENTGRANT GR/",
+       "DAF",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "Simultaneous (email sometimes ~1 day delayed)",
+       "EFT",
+       "Thrivent Financial's Thrivent Choice(R) program"
+      ],
+      [
+       "Fidelity grant/",
+       "DAF / Match",
+       "https://connect.stripe.com/express_login#balances",
+       "Use finance@jointhebibleproject.com for login",
+       "Yes – Alayna's #",
+       "Email + Portal",
+       "~3 bus. days before EFT",
+       "EFT",
+       "Fidelity Giving Marketplace"
+      ],
+      [
+       "AMER ONLINE GIV1/",
+       "DAF",
+       "https://causes.benevity.org/user",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alex's #",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "Benevity"
+      ],
+      [
+       "THE UK ONLINE GIVING FOUNDATION",
+       "DAF",
+       "https://causes.benevity.org/user",
+       "Bitwarden – Shared-Financial",
+       "Yes – Alex's #",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "Benevity"
+      ],
+      [
+       "FrontStream CM/",
+       "DAF / Match",
+       "https://connect.frontstream.com/Login",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "Frontstream"
+      ],
+      [
+       "PCA Trust/",
+       "DAF",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "Simultaneous (email sometimes ~1 day delayed)",
+       "EFT",
+       "PCA Foundation"
+      ],
+      [
+       "Bright Funds/",
+       "DAF / Match",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "~2 bus. days before EFT",
+       "EFT",
+       "Bright Funds"
+      ],
+      [
+       "UNITED WAY CALIF/",
+       "DAF",
+       "https://uwccr.unitedwayepledge.org/crm/j_security_check",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "United Way California Capital Region"
+      ],
+      [
+       "UW OF CENTRAL IN/",
+       "DAF",
+       "https://unitedwayofcentralindiana2.my.site.com/agencypayeeportal/s/login",
+       "Bitwarden – Shared-Financial (alayna.phillips@uwci.agency.org)",
+       "No",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "United Way of Central Indiana"
+      ],
+      [
+       "UW CA CAP Region/",
+       "DAF",
+       "https://uwccr.unitedwayepledge.org/crm/Start.jsp",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Email + Portal",
+       "~1 bus. day after EFT",
+       "EFT",
+       "United Way California Capital Region"
+      ],
+      [
+       "OURCHANGEFOUNDAT/",
+       "DAF",
+       "https://api.getchange.io/sign_in",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Portal only (no email)",
+       "N/A",
+       "EFT",
+       "Change Foundation"
+      ],
+      [
+       "CNTRLINDIANA000/",
+       "DAF",
+       "Joel's inbox (Hamilton Community Foundation — request donor details from Joel)",
+       "N/A",
+       "N/A",
+       "Email only (via Joel)",
+       "Simultaneous (email sometimes ~1 day delayed)",
+       "EFT",
+       "Hamilton County Community Foundation"
+      ],
+      [
+       "CFGDM/",
+       "DAF",
+       "Alayna's inbox (request donor details from Alayna)",
+       "N/A",
+       "N/A",
+       "Email only (via Alayna)",
+       "Simultaneous (email sometimes ~1 day delayed)",
+       "EFT",
+       "Community Foundation of Greater Des Moines"
+      ],
+      [
+       "CRU FOUNDATION/",
+       "DAF",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "~4 bus. days before EFT",
+       "EFT",
+       "Cru Foundation"
+      ],
+      [
+       "IPAY SOLUTIONS/",
+       "Bill Pay",
+       "https://www.jhaipayportal.com/Home/Login?key=74Qe9So1 (MARS Site)",
+       "Bitwarden – Shared-Financial",
+       "No",
+       "Email + Portal",
+       "~1 bus. day before EFT",
+       "Misc",
+       "N/A"
+      ],
+      [
+       "Allied Payment/",
+       "Bill Pay",
+       "Finance inbox",
+       "N/A",
+       "N/A",
+       "Email only",
+       "~1 bus. day before EFT",
+       "Misc",
+       "N/A"
+      ],
+      [
+       "ORIG: OVERFLOW APP INC.",
+       "Stock",
+       "https://dashboard.overflow.co/login",
+       "Bitwarden – Shared-Financial (alayna.phillips@jbibleproject.com)",
+       "No",
+       "Portal only (no email)",
+       "N/A",
+       "Misc",
+       "Overflow App Inc"
+      ],
+      [
+       "Patreon/",
+       "Gift disbursement",
+       "N/A — API setup for SF",
+       "N/A",
+       "N/A",
+       "N/A",
+       "N/A",
+       "N/A (API)",
+       "N/A"
+      ],
+      [
+       "Amazon.com Servi/",
+       "Royalties (not a gift)",
+       "N/A",
+       "N/A",
+       "N/A",
+       "N/A",
+       "N/A",
+       "Not entered in SF",
+       "N/A"
+      ]
+     ]
+    },
+    {
+     "title": "Finance inbox labels",
+     "note": "Archive only after the Salesforce batch has been tied out and processed.",
+     "columns": [
+      "Label",
+      "Meaning"
+     ],
+     "rows": [
+      [
+       "Awaiting",
+       "Email received; the EFT hasn’t appeared in the bank yet. Some DAFs email several days before the money arrives."
+      ],
+      [
+       "Downloaded",
+       "File exported/saved to the computer. Gift(s) not yet entered in Salesforce."
+      ],
+      [
+       "Entered",
+       "Gift(s) entered in the SF batch. Don’t archive until the batch is tied out and processed."
+      ],
+      [
+       "Imported / To Be Imported",
+       "NCF and Fidelity only (separate import). Archive once the gifts are imported into SF."
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "proc-check-gifts",
+   "name": "Check gifts: mail, deposit and Salesforce",
+   "area": "Gifts & donations",
+   "frequency": "As received",
+   "source": "Upload_Check_Gifts_into_SF.docx",
+   "purpose": "Open and sort the mail, deposit the checks in Cass, scan the support and notes, and enter every check as a gift in Salesforce. The Salesforce batch must match the deposit to the cent.",
+   "sections": [
+    {
+     "title": "Open the mail",
+     "steps": [
+      {
+       "text": "Pick up mail from the mailroom downstairs and from the Post Office (1020 SE 7th Ave, Portland, OR, PO Box 14278).",
+       "system": "sys-mailroom"
+      },
+      {
+       "text": "As you open it, check: is it for BibleProject, or for Imago or someone else? Which month is the donation for? Is it an individual’s check, a donor advised fund (DAF) or a qualified charitable distribution (QCD)? If it isn’t a donation, what is it and who should get it? Keep everything in order so mistakes are easy to trace later.",
+       "system": "sys-mailroom"
+      },
+      {
+       "text": "Sort into piles: Donations (a separate pile per month), Deposit Support (information about a check: the grant or person it came from), Deposit Notes (notes from donors, often encouragement or thanks) and Other (mail for specific people or departments).",
+       "system": "sys-mailroom",
+       "connection": "c-checks-cass"
+      },
+      {
+       "text": "2 or 3 times a year, Omaha Community Charity Foundation emails a check: print it, cut it and deposit it like any other. If you can’t print, try sending it to Cass to deposit.",
+       "system": "sys-mailroom"
+      }
+     ]
+    },
+    {
+     "title": "Count the deposit",
+     "steps": [
+      {
+       "text": "In the Deposit Count Google Sheet, duplicate the most recent tab (right-click → Duplicate), rename it to the deposit date and delete the old entries. Add the deposit date in the green cell at the bottom.",
+       "system": "sys-gdrive",
+       "connection": "c-checks-cass"
+      },
+      {
+       "text": "Carry over the addition formula: on the previous tab, screenshot rows 1–3 across to column D (one month) or column F (two months), paste it into the new tab, and enter each check amount under the $ sign.",
+       "system": "sys-gdrive",
+       "connection": "c-checks-cass"
+      }
+     ]
+    },
+    {
+     "title": "Deposit the checks in Cass",
+     "steps": [
+      {
+       "text": "Log in to Cass Deposit (link below; the login and security answers are in LastPass). At the top left, deposit into the Operating Account with the Deposit Control Amount = the deposit total. Different months (e.g. December and January) are separate deposits.",
+       "system": "sys-cass",
+       "connection": "c-checks-cass"
+      },
+      {
+       "text": "Scan all the checks (open the WebScan app if the scanner needs connecting). Once the deposit matches the control amount, save “Deposit Image: Front Only” as deposit date + month + DepositImageFrontOnly, e.g. “1.26.23 January DepositImageFrontOnly”.",
+       "system": "sys-cass",
+       "connection": "c-checks-cass"
+      }
+     ]
+    },
+    {
+     "title": "Scan support, notes and other mail",
+     "steps": [
+      {
+       "text": "Plug in the Epson scanner. Scan Deposit Support (split by month if there’s more than one) as “1.26.23 Deposit Support”, and Deposit Notes (encouragement, address changes) as “1.26.23 Deposit Notes”.",
+       "system": "sys-mailroom",
+       "connection": "c-mail-drive"
+      },
+      {
+       "text": "Scan each piece of Other mail on its own so it can be sent on, named for what it is (e.g. “Library of Congress”).",
+       "system": "sys-mailroom"
+      }
+     ]
+    },
+    {
+     "title": "Enter the check gifts in Salesforce",
+     "steps": [
+      {
+       "text": "Open Salesforce → the 9 dots at the top left → search “Gift Entry” → New Batch (top right) → Check/NCF Entry → Next.",
+       "system": "sys-salesforce",
+       "connection": "c-checks-sf"
+      },
+      {
+       "text": "Batch Name = deposit date + “Deposit” (e.g. “1/26/2023 Deposit”). With two months, make one batch each: “1/26/2023 December Deposit” and “1/26/2023 January Deposit”. Expected Total Batch Amount = the deposit total. Next → set the default to Contact 1 → Save.",
+       "system": "sys-salesforce",
+       "connection": "c-checks-sf"
+      },
+      {
+       "text": "For each check: Contact1 for an individual, Account1 for an organization (e.g. Northwest Naturals). Link the existing contact or account. Opportunity Amount = the check total; Close Date = the date of the check. Never fill both Contact and Account: an affiliate account fills in automatically for a contact.",
+       "system": "sys-salesforce",
+       "connection": "c-checks-sf"
+      },
+      {
+       "text": "When it applies, fill Donor Advised (a gift through a fund; the support usually mentions a grant) or Qualified Charitable Donation Account (from an investment account: IRA, principal account…). Never both. See the DAF vs. QCD list below.",
+       "system": "sys-salesforce",
+       "connection": "c-checks-sf"
+      },
+      {
+       "text": "Make sure the total entered equals the deposit control amount, and take a screenshot of the matching totals.",
+       "system": "sys-salesforce",
+       "connection": "c-checks-sf"
+      }
+     ]
+    },
+    {
+     "title": "Finish up",
+     "steps": [
+      {
+       "text": "Upload Deposit Notes and Deposit Support to the deposit folder in Google Drive (link below), and post in the Patron Slack channel that they’re ready. Call out anything that needs attention, like a tax receipt request or a gift in memory of someone who has died.",
+       "system": "sys-gdrive",
+       "connection": "c-mail-drive"
+      },
+      {
+       "text": "A check donation of $10,000 or more: let the Investors Care Slack channel know."
+      },
+      {
+       "text": "Questions about the Acumatica JRE go to Alex and Macenzie. Other mail: send it in Slack directly to the person it’s for."
+      }
+     ]
+    }
+   ],
+   "reference": [
+    {
+     "title": "DAF vs. QCD",
+     "note": "The same company can appear as both, e.g. “Raymond James Charitable” (DAF) vs. “Raymond James (Client Disbursement)” (QCD). Only ever one of the two fields is filled.\nFidelity Brokerage Services LLC: if the donor’s name isn’t on it, enter Anonymous as the individual contact. Mellon Trust of Delaware is the bank, not the donor.",
+     "columns": [
+      "Type",
+      "Key words",
+      "Examples"
+     ],
+     "rows": [
+      [
+       "Donor advised fund (DAF): fill “Donor Advised”",
+       "Foundation, Fund, Grant, Charitable",
+       "Schwab Charitable; CyberGrants; Charities Aid Foundation (CAF); Vanguard Charitable; Thrivent Charitable; Renaissance Charitable Foundation (RCF); Charityvest, Inc.; Cru Foundation; America’s Charities (follow the link, log in, run “Pledge Detail Report”); Nazarene Foundation; Truman Heart Community Foundation; Bank of America Charitable Gift Fund; American Endowment Foundation; The Winston-Salem Foundation; United Way California Capital Region; Raymond James Charitable; Edward Jones Charitable Gift Fund; JP Morgan LLC; Miles Family Fund (Signatry); Morgan Stanley"
+      ],
+      [
+       "Qualified charitable distribution (QCD): fill “Qualified Charitable Donation Account”",
+       "IRA, Retirement Distribution, Investment, Clearing, Clearing Services, Disbursement",
+       "National Financial Services LLC; Charles Schwab & Co Inc Cust; Fidelity Brokerage Services LLC; LPL Financial; Thrivent Financial; Ameriprise Financial; Wells Fargo Clearing Services, LLC; Pershing Advisers (or just Pershing); Morgan Stanley; Edward Jones; Family Trust of Kevin and Joni; Robert W. Baird & Co. Incorporated; Raymond James (Client Disbursement); TD Ameritrade Clearing or Institutional"
+      ]
+     ]
+    },
+    {
+     "title": "Links",
+     "columns": [
+      "What",
+      "Where"
+     ],
+     "rows": [
+      [
+       "Cass Deposit (remote check deposit)",
+       "https://direct4.imagedepositgateway.com/MultiFactorAuthenticationWebClient/Default.aspx?ReturnUrl=%2fMerchantCaptureWebClient%2fDefault.aspx%3finstitution%3d2114&institution=2114"
+      ],
+      [
+       "Deposit notes & support folder",
+       "https://drive.google.com/drive/folders/1N2WQ_wty4IdndyAe9Jw6e_8DQKXuJoyw"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "proc-budget-upload",
+   "name": "Upload the annual budget into Acumatica",
+   "area": "Budget",
+   "frequency": "Annually",
+   "source": "Upload_Budget_into_Acumatica_with_Bill_Dean_-_Updated_11-12-25.docx",
+   "purpose": "Load the finalized budget from Budgyt into Acumatica as department budgets (Mass Budget Import), and set up the new year’s departments and P&L reports.",
+   "sections": [
+    {
+     "title": "Before exporting from Budgyt",
+     "steps": [
+      {
+       "text": "Make sure no grants are blank: run a P&L in Budgyt showing only the blank grants and fix them there. Grants that are inactive in Acumatica don’t show as errors; they just don’t import.",
+       "system": "sys-budgyt",
+       "connection": "c-budget-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Export from Budgyt",
+     "steps": [
+      {
+       "text": "Manual export for the GL: Periods as Columns, Exclude rows with zero, Include Grants, Summarized → Download as Importable File.",
+       "system": "sys-budgyt",
+       "connection": "c-budget-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Format the Excel",
+     "steps": [
+      {
+       "text": "Make an Account column: just the left 4 digits.",
+       "connection": "c-budget-acumatica"
+      },
+      {
+       "text": "Make a Subaccount column: the department’s 3 digits (the middle three of the file’s “Account” column), then “-”, then the 3-digit grant code (far right of the file; if a department’s account has 2 grants, pick one).",
+       "connection": "c-budget-acumatica"
+      },
+      {
+       "text": "Delete the balance sheet lines and the auto lines, and change revenue to positive numbers.",
+       "connection": "c-budget-acumatica"
+      },
+      {
+       "text": "Tie out: all expenses should tie to Budgyt.",
+       "system": "sys-budgyt",
+       "connection": "c-budget-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Import into Acumatica",
+     "steps": [
+      {
+       "text": "Mass Budget Import → “+” → fill in the Budget Import names → upload. Check it uploaded correctly, then release. A subaccount that isn’t in Acumatica won’t import, and a notice shows on screen.",
+       "system": "sys-acumatica",
+       "connection": "c-budget-acumatica"
+      },
+      {
+       "text": "Optional: tick the checkbox when releasing the Mass Budget Import to release all its budgets automatically. That skips the approve and release steps below, and also skips reviewing them first.",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Department Budget Entry: entries can’t be taken off hold in bulk, but they can be approved and released in bulk (next two steps).",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "“Approve Department Budgets”: every department budget with status Pending Approval.",
+       "system": "sys-acumatica",
+       "connection": "c-budget-acumatica"
+      },
+      {
+       "text": "“Release Department Budgets”: every Approved budget ready to release. Don’t release until you’re 100% confident.",
+       "system": "sys-acumatica",
+       "connection": "c-budget-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Set up the new year’s reports and departments",
+     "steps": [
+      {
+       "text": "Point the comparative P&L at the new budget: Finance → Column Set → DPLC Actual Budget → Data Source (bottom of the page): change columns C and G to the right “BUDGETR*”. Then Finance → Column Set → DPLM - Profit & Loss Comparative: change column C.",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Add new departments: More items → Department Management → Department budget by period (pin it). Finance → Show all → Unit sets → Department → “All” → “+” to add department numbers and descriptions. In Data Source, fill “Start Sub:” and copy the same number into “End sub:”, like the others.",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Create the department’s subaccounts: Departments → the department number → edit pencil by the sub segment value → select the subaccounts → Process.",
+       "system": "sys-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "If the budget doesn’t tie",
+     "steps": [
+      {
+       "text": "Symptom: GL details for an account don’t tie to the BUDGETR amount. Check whether more than one Mass Budget Import was released for the same period: the Mass Budget Import page’s Created Budget Entries tab shows what each import created.",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Reverse the extra entries. Released: click “Reverse” in the header and release the reversal entry. Approved: put it back on hold, then delete it. On hold: delete it. A Department or Grant budget that’s been completed can’t be reversed.",
+       "system": "sys-acumatica"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "proc-month-close",
+   "name": "Month-end close",
+   "area": "Month close",
+   "frequency": "Monthly",
+   "source": "Year - Month Month Close Checklist Template - Slab.docx",
+   "purpose": "Close the month in Acumatica, with everything updated before end of day on the close date. Whoever does an item notes their name and the date; Joel and Alex add theirs when the checklist is complete.",
+   "sections": [
+    {
+     "title": "Open the month",
+     "steps": [
+      {
+       "text": "Open the next month in Acumatica: Finance → Manage Financial Periods → Action: Open → select the month → Process.",
+       "who": "Macenzie Woodman",
+       "system": "sys-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Cash",
+     "steps": [
+      {
+       "text": "Cass Operating, Cass Certificate of Deposit and Cass ICS: create any JREs needed (interest, gains/losses, final costs). Whoever prepares, the other person releases. Note who prepared and who approved/released each account.",
+       "who": "Alex Hepburn / Alayna Phillips",
+       "system": "sys-cass",
+       "connection": "c-cass-acu-rec"
+      },
+      {
+       "text": "KeyBank Money Market, KeyBank Checking, Stripe Checking, PayPal Checking, Wise, Fidelity – Delap Wealth Advisory and Invest – Tschetter Group: the same, prepared by one and released by the other.",
+       "who": "Alex Hepburn / Alayna Phillips",
+       "system": "sys-banks",
+       "connection": "c-banks-acu-rec"
+      },
+      {
+       "text": "Divvy CC: the same, prepared by one and released by the other.",
+       "who": "Alex Hepburn / Alayna Phillips",
+       "system": "sys-bill"
+      },
+      {
+       "text": "NCF, Cass ICS and Hedge Pangea: Macenzie Woodman or Joel Paul pulls the information.",
+       "who": "Macenzie Woodman / Joel Paul",
+       "system": "sys-banks",
+       "connection": "c-banks-acu-rec"
+      },
+      {
+       "text": "Release the bank recs.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica",
+       "connection": "c-cass-acu-rec"
+      }
+     ]
+    },
+    {
+     "title": "AR",
+     "steps": [
+      {
+       "text": "Upload the BOL to any AR invoices.",
+       "who": "Johanna Keel",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Review the Receivables module entries and make sure true sales JREs are released based on the BOL ship date. Don’t release Koorong unless it’s an actual royalties payment.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "International shipping: once Merchandise has sent the invoice to Koorong or 10ofThose, close the invoice by applying a 100% credit and releasing.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Monthly tax payable liability JRE.",
+       "who": "Macenzie Woodman",
+       "system": "sys-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Inventory",
+     "steps": [
+      {
+       "text": "Send the Renewal Logistics inventory reports to the Slack Finance channel 2 business days after month end.",
+       "who": "Johanna Keel",
+       "system": "sys-inventory",
+       "connection": "c-inventory-acu"
+      },
+      {
+       "text": "Update the weekly merch distribution sheet for the month.",
+       "who": "Johanna Keel"
+      },
+      {
+       "text": "Pull the Koorong and 10ofThose inventory reports.",
+       "who": "Johanna Keel",
+       "system": "sys-inventory",
+       "connection": "c-inventory-acu"
+      },
+      {
+       "text": "Prepare the monthly inventory tie-out and JREs.",
+       "who": "Alayna Phillips",
+       "system": "sys-acumatica",
+       "connection": "c-inventory-acu"
+      },
+      {
+       "text": "Reclassify merchandise into specific teams in Acumatica.",
+       "who": "Alayna Phillips",
+       "system": "sys-acumatica",
+       "connection": "c-inventory-acu"
+      },
+      {
+       "text": "Review and release the JRE.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica",
+       "connection": "c-inventory-acu"
+      }
+     ]
+    },
+    {
+     "title": "Fixed assets",
+     "steps": [
+      {
+       "text": "Prepare and update “Fixed Asset Listing.xlsx”.",
+       "who": "Alayna Phillips",
+       "system": "sys-fixed-assets",
+       "connection": "c-fa-acu"
+      },
+      {
+       "text": "Enter the JRE for FA depreciation into Acumatica.",
+       "who": "Alayna Phillips",
+       "system": "sys-acumatica",
+       "connection": "c-fa-acu"
+      },
+      {
+       "text": "Review and release the JRE.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica",
+       "connection": "c-fa-acu"
+      }
+     ]
+    },
+    {
+     "title": "Liabilities",
+     "steps": [
+      {
+       "text": "Review and upload Divvy reimbursements into Acumatica.",
+       "who": "Alayna Phillips",
+       "system": "sys-bill",
+       "connection": "flow-bill-acumatica"
+      },
+      {
+       "text": "Run “AP Aged Period Sensitive” for the period being closed. Problem-solve any balances over 60 days, and tie it to the balance sheet.",
+       "who": "Alex Hepburn",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Approve Bill reimbursements on the 16th and the 1st.",
+       "who": "Macenzie Woodman",
+       "system": "sys-bill"
+      },
+      {
+       "text": "Payroll & 401k entries for each pay period end (the 15th and the last day of the month): review the detail of the final payroll register (department and account codes, dollar amounts, staff changes, 401k, other benefits, deductions) and make sure the balance sheet agrees. Prepared by Joel, reviewed by Macenzie.",
+       "who": "Joel Paul / Macenzie Woodman",
+       "system": "sys-payroll",
+       "connection": "c-payroll-acu"
+      }
+     ]
+    },
+    {
+     "title": "Revenue",
+     "steps": [
+      {
+       "text": "Check Looker revenue against the P&L for reasonableness.",
+       "who": "Joel Paul",
+       "system": "sys-looker",
+       "connection": "c-looker-acu"
+      },
+      {
+       "text": "Restricted revenue for active grants (none until more restricted revenue comes in): reclass Bolthouse & Murdock to Net Assets each month, and update Subaccount Gifts – Languages for any restricted language gifts.",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Watch for receivable money from Bolthouse & Murdock: it’s already booked as a receivable."
+      }
+     ]
+    },
+    {
+     "title": "Salesforce",
+     "steps": [
+      {
+       "text": "Import the bulk uploads into Salesforce: Benevity; GCF (ask by email for the “reimbursement” and submit expenses); Stewardship (Macenzie or Joel needs to ask for the disbursement by email before a download is available).",
+       "who": "Alex Hepburn",
+       "system": "sys-salesforce",
+       "connection": "c-giving-bulk-sf"
+      },
+      {
+       "text": "End-of-month check deposit.",
+       "who": "Alex Hepburn / Alayna Phillips",
+       "system": "sys-cass",
+       "connection": "c-checks-cass"
+      }
+     ]
+    },
+    {
+     "title": "Review",
+     "steps": [
+      {
+       "text": "Balance sheet review. Cash: every bank account has its final JREs (interest, gains/losses, final costs) and its bank statement is uploaded to Acumatica. Inventory and fixed assets: no changes needed, and the numbers tie to the Excel files. AP ties to “AP Aged Period Sensitive”. Compare with last month for reasonableness, and double-check the balances.",
+       "who": "Alex Hepburn / Joel Paul",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "P&L review: end-of-month payroll is included (roll forward the PMo tab), and the P&L makes sense against PMoEnd.",
+       "who": "Alex Hepburn / Joel Paul",
+       "system": "sys-acumatica"
+      }
+     ]
+    },
+    {
+     "title": "Post close",
+     "steps": [
+      {
+       "text": "Compile the list of Steve’s credit card transactions for the next board meeting (three times a year).",
+       "who": "Joel Paul / Macenzie Woodman",
+       "system": "sys-bill"
+      },
+      {
+       "text": "Add your name and the date once the checklist is complete.",
+       "who": "Joel Paul / Alex Hepburn"
+      }
+     ]
+    },
+    {
+     "title": "Supplemental",
+     "steps": [
+      {
+       "text": "Proof of Cash.",
+       "who": "Alex Hepburn / Joel Paul"
+      },
+      {
+       "text": "Video production: update both Google Sheets in the Shared Drive that track video cost and designers’ time (Track Video Projects, Video Cost Calculation, Video Amortization). Macenzie prepares the worksheets, Joel reviews.",
+       "who": "Macenzie Woodman / Joel Paul",
+       "system": "sys-gdrive"
+      },
+      {
+       "text": "Budget: go over the TB month-over-month actuals against budget with Joel, then message department leads in Slack (prepped in OneVoice). They can request reclassifications via /hal finance_support.",
+       "who": "Joel Paul"
+      },
+      {
+       "text": "Close Acumatica on the 18th, after reclasses: “Close” the Payables, Bank and Receivables modules (Processes → Close Financial Periods), then close the Finance module (Process → Manage Finance Periods).",
+       "who": "Macenzie Woodman",
+       "system": "sys-acumatica"
+      },
+      {
+       "text": "Update the analysis documents: 5-year giving forecast, Department Summary, High/Low Giving Rails, Cash Flow Projection, and the presentation to ELT.",
+       "who": "Joel Paul or Alex Hepburn"
+      },
+      {
+       "text": "Quarterly: Overflow & National Christian Foundation. Note who prepared and who approved/released.",
+       "who": "Alayna Phillips"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

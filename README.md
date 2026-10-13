@@ -1,15 +1,19 @@
 # Finance data flows
 
-A zoomable map of BibleProject's finance systems and how data moves between them. It's a
-[bp-vibes](CLAUDE.md) app with no build step: `index.html` (markup and styles) and `app.js` (the
-map, storage, presence).
+A zoomable map of BibleProject's finance systems, how data moves between them, and the
+step-by-step processes the team follows. It's a [bp-vibes](CLAUDE.md) app with no build step:
+`index.html` (markup and styles), `app.js` (the map, processes, storage, presence) and `imports/`
+(process instructions that ship with the app).
 
 - **Zoom out** to see every system and how data moves between them.
 - **Click a connection** to open its step-by-step process: source → steps → destination.
 - **Zoom in** on the map and each connection shows its steps as numbered dots, colour-coded by
   type. Click a dot to go straight to that step.
-- **Click a system** to see its owner, what it's used for, and everything it sends, receives,
-  reconciles or syncs with.
+- **Click a system** to see its owner, what it's used for, everything it sends, receives,
+  reconciles or syncs with, and the processes that use it.
+- **Processes** (top bar) lists the team's step-by-step instructions. Open one to read and edit
+  it; the map lights up the systems and connections it uses and tags each system with its step
+  numbers.
 
 Every edit saves automatically and is shared with anyone signed in at BibleProject.
 
@@ -20,6 +24,29 @@ Every connection says **how** the data gets across: **API / automatic**, **File 
 map answers "where are we still re-keying things?" at a glance. The connection's name appears
 when you hover or zoom in. The bar at the top-left filters the map to one method (click it
 again to show everything).
+
+## Processes
+
+A process is the team's instructions for a piece of work, such as month-end close or entering
+EFT gifts, written as numbered steps in sections. Each step can say **who** does it, which
+**system** it happens in, and which **connection** on the map it's part of. That's how a process
+and the data flow map stay tied together: open a process and the map highlights where it
+happens; open a system or connection and it lists the processes that use it.
+
+Some processes are mostly about moving data (EFT gifts into Salesforce). Others are checklists
+that mostly happen inside one system (month-end close). Both are processes; only the steps that
+move data between two systems are connections.
+
+Processes can also carry read-only **reference tables**, such as the EFT source table or the
+DAF vs. QCD keyword list.
+
+### Importing instructions
+
+Written instructions are converted into import files in [`imports/`](imports/README.md). A file
+listed in `imports/index.json` is added automatically the first time anyone opens the app after
+it's deployed. Any import file can also be added by hand from **Processes → Import from a
+file…**, which shows what it will add first. Imports only add things; they never change
+what's already on the map.
 
 ## Live together
 
@@ -69,7 +96,8 @@ All declared in `vibes.json`:
 | --- | --- | --- |
 | `systems` | piece of software / spreadsheet | name, category, description, owner, link, map position |
 | `flows` | connection between two systems | `refs.from` / `refs.to` → `systems/<key>`; kind, name, description, frequency, owner, ordered `steps` |
-| `meta` | — | `seeded` marker, so the starter map from the original runbook is written only once |
+| `processes` | process | name, area, purpose, frequency, owner, source document, `sections` of `steps` (text, who, system key, connection key), `reference` tables |
+| `meta` | — | `seeded` marker, so the starter map from the original runbook is written only once; one `import-<file>` marker per shipped import |
 | `presence` | open browser tab | cursor trail, what's open, what's being edited; ephemeral |
 
 All are `"access": "shared"`: **anyone signed in at BibleProject** can read them.
@@ -83,8 +111,9 @@ this browser only.
 
 ## Deploying
 
-Zip the three app files (all at the top level) and upload the zip on the app's page in HAL:
+Zip the app files and the `imports` folder (all at the top level) and upload the zip on the
+app's page in HAL:
 
 ```sh
-zip finance-data-flows.zip index.html app.js vibes.json
+zip -r finance-data-flows.zip index.html app.js vibes.json imports
 ```

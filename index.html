@@ -3,12 +3,15 @@
   Finance data flows — a zoomable map of BibleProject's finance systems and the processes
   that move data between them. Built as a bp-vibes app: see CLAUDE.md for platform rules.
 
-  Data lives in three `shared` collections declared in vibes.json (anyone signed in at
+  Data lives in `shared` collections declared in vibes.json (anyone signed in at
   BibleProject can read and edit):
-    systems — one record per piece of software   { name, category, description, owner, url, x, y }
-    flows   — one record per connection, refs.from / refs.to point at systems/<key>
-              { kind: flow|reconcile|sync, name, description, frequency, owner, steps: [...] }
-    meta    — the "seeded" marker, so the starter map is only written once
+    systems   — one record per piece of software   { name, category, description, owner, url, x, y }
+    flows     — one record per connection, refs.from / refs.to point at systems/<key>
+                { kind: flow|reconcile|sync, name, description, frequency, owner, steps: [...] }
+    processes — step-by-step instructions { name, area, sections: [{ title, steps: [{ text, who,
+                system, flow }] }], reference: [...] }; system/flow are keys, not refs
+    meta      — the "seeded" marker and one marker per shipped import (imports/index.json)
+    presence  — one record per open tab, for live cursors
 
   Opened with no platform around it (straight off disk), the app runs in local preview mode
   and keeps everything in this browser's localStorage instead.
@@ -473,6 +476,72 @@
   }
   .dr-foot .btn { margin-left: auto; }
 
+  /* ---------- Processes ---------- */
+  .pcount { font-size: 11px; color: var(--ink-faint); font-weight: 500; }
+  .pcount:empty { display: none; }
+  .proc-menu { right: auto; left: auto; width: 360px; padding: 8px; }
+  .proc-menu input {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel-2); outline: none; margin-bottom: 6px;
+  }
+  .proc-menu input:focus { border-color: var(--focus); background: var(--panel); }
+  .proc-list { max-height: min(420px, 60vh); overflow: auto; }
+  .proc-list h4 { margin: 8px 6px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); font-weight: 600; }
+  .proc-list button { display: flex; align-items: center; gap: 10px; }
+  .proc-list button.active { background: var(--muted-bg); }
+  .proc-list .r-empty { padding: 10px; color: var(--ink-faint); font-size: 13px; }
+  .pl-main { min-width: 0; }
+  .pl-name { display: block; font-weight: 500; }
+  .pl-sub { display: block; font-size: 11.5px; color: var(--ink-faint); }
+  .proc-foot { display: flex; gap: 6px; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
+  .proc-foot .btn { flex: 1; justify-content: center; }
+  .proc-ini { background: var(--accent); color: var(--accent-ink) !important; }
+  .proc-menu .proc-ini, .results .proc-ini { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; }
+  .proc-kicker { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: var(--accent); color: var(--accent-ink); }
+  .proc-mark rect { fill: var(--accent); }
+  .proc-mark text { fill: var(--accent-ink); font-size: 11.5px; font-weight: 600; }
+  .fld-row.three { grid-template-columns: 1.5fr 1fr 1fr; }
+  .proc-src { margin: -4px 0 12px; font-size: 11.5px; color: var(--ink-faint); overflow-wrap: anywhere; }
+  .where { display: grid; gap: 8px; margin: 2px 0 4px; }
+  .where-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .where-row .lbl { font-size: 11.5px; color: var(--ink-faint); margin-right: 2px; }
+  .conn-chip { padding-left: 10px; font-size: 12px; max-width: 100%; }
+  .conn-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--mc); flex-shrink: 0; }
+  .proc-sec .sec-head { margin-bottom: 6px; }
+  .sec-title {
+    flex: 1; min-width: 0; font-size: 13px; font-weight: 600; border: 1px solid transparent; border-radius: 6px;
+    padding: 2px 6px; margin-left: -6px; background: none; outline: none;
+  }
+  .sec-title:hover { border-color: var(--line); }
+  .sec-title:focus { border-color: var(--focus); background: var(--panel-2); }
+  .proc-sec .sec-head:hover .sec-ctrl, .sec-ctrl:focus-within { opacity: 1; }
+  .sec-add { margin-top: 14px; }
+  .tl-meta.wrap { flex-wrap: wrap; }
+  .who-input { flex: 0 1 130px; width: auto; }
+  .sys-select { color: var(--ink-soft); font-weight: 500; max-width: 170px; }
+  .link-select {
+    flex: 1; min-width: 0; border: 1px solid transparent; border-radius: 6px; background: none;
+    font-size: 11.5px; color: var(--ink-faint); padding: 1px 2px; outline: none; cursor: pointer;
+  }
+  .link-select:hover, .link-select:focus { border-color: var(--line); }
+  .link-select.on { color: var(--focus); font-weight: 500; }
+  .link-open { border: 0; background: none; color: var(--focus); font-size: 11.5px; padding: 0 2px; white-space: nowrap; }
+  .link-open:hover { text-decoration: underline; }
+  .ref-note { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-soft); white-space: pre-line; }
+  .ref-wrap { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
+  table.ref { border-collapse: collapse; font-size: 11.5px; min-width: 100%; }
+  table.ref th, table.ref td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  table.ref th { position: sticky; top: 0; background: var(--panel-2); font-weight: 600; white-space: nowrap; color: var(--ink-soft); }
+  table.ref td { min-width: 110px; }
+  table.ref a { color: var(--focus); white-space: nowrap; text-decoration: none; }
+  table.ref a:hover { text-decoration: underline; }
+  form.imp { max-height: 80vh; overflow: auto; }
+  .imp-list { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+  .imp-list summary { padding: 7px 10px; cursor: pointer; display: flex; gap: 8px; }
+  .imp-list summary b { margin-left: auto; font-weight: 600; }
+  .imp-list ul { margin: 0; padding: 0 10px 8px 28px; color: var(--ink-soft); font-size: 12.5px; }
+  .imp-replace { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--ink-soft); margin-top: 10px; }
+
   /* ---------- Dialogs & toasts ---------- */
   dialog {
     border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(440px, calc(100vw - 32px));
@@ -612,11 +681,12 @@
     </div>
     <div class="search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-      <input id="search" type="search" placeholder="Search systems, flows, steps" autocomplete="off" aria-label="Search">
+      <input id="search" type="search" placeholder="Search systems, flows, processes" autocomplete="off" aria-label="Search">
       <kbd>/</kbd>
       <div class="results" id="results" hidden></div>
     </div>
     <div class="actions">
+      <button class="btn" id="procBtn" title="Step-by-step processes" aria-haspopup="true" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="lbl">Processes</span><span class="pcount" id="procCount"></span></button>
       <button class="btn" id="addSystemBtn" title="Add a system"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">System</span></button>
       <button class="btn primary" id="addFlowBtn" title="Add a connection between two systems"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 12h13M13 6l6 6-6 6"/></svg><span class="lbl">Connection</span></button>
       <button class="icon-btn" id="menuBtn" aria-label="More" aria-haspopup="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
@@ -626,9 +696,18 @@
     <div class="menu" id="menu" hidden role="menu">
       <button data-menu="fit" role="menuitem">Fit everything in view<span class="m-sub">Shortcut: F</span></button>
       <button data-menu="tidy" role="menuitem">Tidy layout<span class="m-sub">Arrange systems left → right by data flow</span></button>
+      <button data-menu="import" role="menuitem">Import processes…<span class="m-sub">Add processes, systems and connections from a file</span></button>
       <button data-menu="export" role="menuitem">Export as JSON<span class="m-sub">Download a backup of the whole map</span></button>
       <button data-menu="refresh" role="menuitem">Refresh<span class="m-sub">Pull in edits from teammates</span></button>
       <button data-menu="live" role="menuitem">Live connection status<span class="m-sub">Who the app can see right now</span></button>
+    </div>
+    <div class="menu proc-menu" id="procMenu" hidden>
+      <input id="procFilter" type="search" placeholder="Find a process" autocomplete="off" aria-label="Find a process">
+      <div class="proc-list" id="procList"></div>
+      <div class="proc-foot">
+        <button class="btn sm" data-pact="new">+ New process</button>
+        <button class="btn sm" data-pact="import">Import from a file…</button>
+      </div>
     </div>
   </header>
   <div class="banner" id="banner" hidden></div>
@@ -654,6 +733,7 @@
         <g id="edges"></g>
         <g id="labels"></g>
         <g id="nodes"></g>
+        <g id="procMarks"></g>
         <g id="peerMarks"></g>
         <path id="ghost" class="ghost" hidden/>
       </g>

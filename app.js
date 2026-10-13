@@ -13,6 +13,7 @@ const CATEGORIES = [
   { id: 'budget',      label: 'Budgeting & planning',  color: '#12876A' },
   { id: 'reporting',   label: 'Reporting & BI',        color: '#C2417A' },
   { id: 'banking',     label: 'Banking & payments',    color: '#8C7A14' },
+  { id: 'giving',      label: 'Giving & donors',       color: '#0E7C86' },
   { id: 'spreadsheet', label: 'Spreadsheet / manual',  color: '#6E7681' },
   { id: 'other',       label: 'Other',                 color: '#9A7458' },
 ];
@@ -34,7 +35,7 @@ const LINK_KINDS = {
   reconcile: { label: 'Reconciles with', short: 'Reconciles', arrow: '⇢⇠' },
   sync:      { label: 'Two-way sync',    short: 'Syncs',      arrow: '⇄' },
 };
-const FREQUENCIES = ['', 'Daily', 'Weekly', 'Bi-weekly', 'Semi-monthly', 'Monthly', 'Quarterly', 'Annually', 'Ad hoc'];
+const FREQUENCIES = ['', 'Daily', 'Weekly', 'Bi-weekly', 'Semi-monthly', 'Monthly', 'Quarterly', 'Annually', 'As received', 'Ad hoc'];
 
 /* The map as it stood in the original runbook. Written once, the first time anyone opens the
    app, then it's everyone's to edit. */
@@ -273,12 +274,13 @@ const store = {
 };
 
 /* ---- Entities <-> records ----
-   Map collections: systems, flows. meta holds the seed marker. */
+   Map collections: systems, flows. processes are step-by-step instructions that point at the
+   systems and connections they use. meta holds the seed and import markers. */
 const MAP_COLLS = ['systems', 'flows'];
-const HUB_COLLS = ['meta'];
+const HUB_COLLS = ['processes', 'meta'];
 const ALL_COLLS = [...MAP_COLLS, ...HUB_COLLS];
 const state = Object.fromEntries(ALL_COLLS.map(c => [c, new Map()]));
-const collOf = (type) => type === 'system' ? 'systems' : 'flows';
+const collOf = (type) => type === 'system' ? 'systems' : type === 'process' ? 'processes' : 'flows';
 const mapOf = (coll) => state[coll];
 const refKey = (ref) => typeof ref === 'string' ? ref.split('/').pop() : null;
 const arr = (v) => Array.isArray(v) ? v : [];
@@ -296,6 +298,7 @@ function fromRecord(coll, r) {
       updatedAt: d.updatedAt || 0, updatedBy: d.updatedBy || '',
     };
   }
+  if (coll === 'processes') return normalizeProcess(r.key, d);
   if (coll !== 'flows') return { key: r.key, ...normalize(coll, d) };
   return {
     key: r.key,
@@ -307,6 +310,37 @@ function fromRecord(coll, r) {
     updatedAt: d.updatedAt || 0, updatedBy: d.updatedBy || '',
   };
 }
+function normalizeProcess(key, d) {
+  const cells = (row) => arr(row).map(c => str(c) || (Number.isFinite(c) ? String(c) : ''));
+  return {
+    key, name: str(d.name) || 'Untitled process', area: str(d.area), purpose: str(d.purpose),
+    frequency: str(d.frequency), owner: str(d.owner), source: str(d.source),
+    sections: arr(d.sections).map(sec => ({
+      id: str(sec?.id) || rid('sec'), title: str(sec?.title),
+      steps: arr(sec?.steps).map(s => ({ id: str(s?.id) || rid('st'), text: str(s?.text), who: str(s?.who), system: str(s?.system), flow: str(s?.flow) })),
+    })),
+    reference: arr(d.reference).map(t => ({ title: str(t?.title), note: str(t?.note), columns: cells(t?.columns), rows: arr(t?.rows).map(cells) })),
+    updatedAt: d.updatedAt || 0, updatedBy: d.updatedBy || '',
+  };
+}
+/* A connection's steps, or every step of a process in order. */
+const stepsOf = (e) => e?.sections ? e.sections.flatMap(s => s.steps) : (e?.steps || []);
+const findStep = (e, sid) => stepsOf(e).find(s => s.id === sid);
+const sectionOf = (p, sid) => p.sections.find(sec => sec.steps.some(s => s.id === sid));
+/* What a process touches on the map: the systems its steps happen in, and the connections
+   they use (including both ends of each). */
+function processFootprint(p) {
+  const n = new Set(), e = new Set();
+  for (const s of stepsOf(p)) {
+    if (s.system && sysOf(s.system)) n.add(s.system);
+    const f = s.flow && state.flows.get(s.flow);
+    if (f) { e.add(f.key); n.add(f.from); n.add(f.to); }
+  }
+  return { n, e };
+}
+const processesUsing = (pred) => [...state.processes.values()].filter(p => stepsOf(p).some(pred))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
 function toRecord(coll, e) {
   const { key, ...data } = e;
   if (coll !== 'flows') return { data };
@@ -335,6 +369,7 @@ function edit(coll, key, mutate, { debounce, render: doRender = true } = {}) {
   if (!e) return;
   mutate(e); stamp(e);
   if (doRender && MAP_COLLS.includes(coll)) renderCanvas();
+  else if (doRender && coll === 'processes') { applyHighlight(); renderProcCount(); }
   if (debounce) {
     const dk = `${coll}/${key}/${debounce}`;
     const prev = debounced.get(dk);
@@ -411,7 +446,7 @@ async function createEntity(coll, entity) {
   const q = { coll, key: entity.key, mutates: [], running: false, failed: false, create: true };
   queues.set(`${coll}/${entity.key}`, q);
   stash(coll, entity.key, entity);
-  runQueue(q);
+  return runQueue(q);
 }
 
 async function deleteEntity(coll, key) {
@@ -431,7 +466,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) flush
    Loading, seeding, refreshing
    ===================================================================================== */
 async function fetchAll() {
-  const lists = await Promise.all(ALL_COLLS.map(c => store.listAll(c).catch(err => { if (MAP_COLLS.includes(c)) throw err; return []; })));
+  const lists = await Promise.all(ALL_COLLS.map(c => store.listAll(c).catch(err => { if (c !== 'meta') throw err; return []; })));
   return Object.fromEntries(ALL_COLLS.map((c, i) => [c, lists[i]]));
 }
 
@@ -832,6 +867,7 @@ function renderCanvas() {
   renderLegend();
   applyHighlight();
   renderPeerMarks();
+  renderProcCount();
   const empty = state.systems.size === 0;
   $('#loading').hidden = true;
   $('#emptyCard').hidden = !empty;
@@ -843,6 +879,11 @@ let hover = null;
 function relatedTo(target) {
   if (!target) return null;
   const n = new Set(), e = new Set();
+  if (target.type === 'process') {
+    const p = state.processes.get(target.id);
+    const fp = p && processFootprint(p);
+    return fp && (fp.n.size || fp.e.size) ? fp : null;
+  }
   if (target.type === 'system') {
     n.add(target.id);
     for (const f of state.flows.values()) if (f.from === target.id || f.to === target.id) { e.add(f.key); n.add(f.from); n.add(f.to); }
@@ -874,6 +915,33 @@ function applyHighlight() {
     el.classList.toggle('hl', !!focus?.e.has(id));
     el.classList.toggle('sel', sel?.type === 'flow' && sel.id === id);
   }
+  renderProcMarks();
+}
+
+/* With a process open, each system it uses gets a tag underneath: which steps happen there. */
+function stepRanges(nums) {
+  const out = [];
+  for (const n of nums) {
+    const last = out[out.length - 1];
+    if (last && n === last[1] + 1) last[1] = n; else out.push([n, n]);
+  }
+  return out.map(([a, b]) => a === b ? `${a}` : b === a + 1 ? `${a}, ${b}` : `${a}–${b}`).join(', ');
+}
+function renderProcMarks() {
+  const g = $('#procMarks');
+  if (!g) return;
+  const p = sel?.type === 'process' ? state.processes.get(sel.id) : null;
+  if (!p) { g.innerHTML = ''; return; }
+  const at = new Map();
+  stepsOf(p).forEach((s, i) => { if (s.system && sysOf(s.system)) (at.get(s.system) || at.set(s.system, []).get(s.system)).push(i + 1); });
+  const font = `600 11.5px ${FONT}`;
+  g.innerHTML = [...at].map(([key, nums]) => {
+    const s = sysOf(key);
+    const text = fitText(`${nums.length === 1 ? 'Step' : 'Steps'} ${stepRanges(nums)}`, font, NODE_W + 40);
+    const w = Math.ceil(textWidth(text, font)) + 20;
+    return `<g class="proc-mark" transform="translate(${s.x},${s.y + NODE_H / 2 + 16})">
+      <rect x="${-w / 2}" y="-11" width="${w}" height="22" rx="11"/><text y="4" text-anchor="middle">${esc(text)}</text></g>`;
+  }).join('');
 }
 
 /* =====================================================================================
@@ -1073,6 +1141,10 @@ function focusSelection() {
     const others = [...state.flows.values()].filter(f => f.from === s.key || f.to === s.key)
       .map(f => sysOf(f.from === s.key ? f.to : f.from)).filter(Boolean);
     fitBounds(boundsOf([s, ...others]), { maxK: 1.25, pad: 60 });
+  } else if (sel.type === 'process') {
+    const p = state.processes.get(sel.id);
+    const systems = p ? [...processFootprint(p).n].map(sysOf).filter(Boolean) : [];
+    if (systems.length) fitBounds(boundsOf(systems), { maxK: 1.25, pad: 60 });
   } else {
     const f = state.flows.get(sel.id);
     const a = sysOf(f.from), b = sysOf(f.to);
@@ -1107,12 +1179,30 @@ function renderDrawer() {
   if (!sel) return;
   const top = drScroll.scrollTop;
   if (sel.type === 'system') renderSystemDrawer(sysOf(sel.id));
+  else if (sel.type === 'process') renderProcessDrawer(state.processes.get(sel.id));
   else renderFlowDrawer(state.flows.get(sel.id));
   drScroll.scrollTop = top;
   $$('textarea', drawer).forEach(autosize);
   drawerStale = false;
   renderDrawerPresence();
 }
+
+/* "Used in processes": every process with a step in this system or on this connection. */
+function usedInSection(list, what) {
+  if (!list.length) return '';
+  return `<section class="sec">
+    <div class="sec-head"><h3>Used in processes<span class="count">${list.length}</span></h3></div>
+    ${list.map(p => {
+      const n = stepsOf(p).filter(what).length;
+      return `<button class="conn-row" data-act="open-proc" data-id="${esc(p.key)}">
+        <span class="ini proc-ini">${procIcon(14)}</span>
+        <span class="c-main"><span class="c-name">${esc(p.name)}</span>
+        <span class="c-sub">${esc([p.area, p.frequency].filter(Boolean).join(' · ') || 'Process')}</span></span>
+        <span class="badge empty">${n} step${n === 1 ? '' : 's'} here</span></button>`;
+    }).join('')}
+  </section>`;
+}
+const procIcon = (size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>`;
 
 function renderSystemDrawer(s) {
   if (!s) return closeDrawer();
@@ -1153,7 +1243,8 @@ function renderSystemDrawer(s) {
       ${group('Sends data to', out, f => f.to)}
       ${group('Receives data from', inc, f => f.from)}
       ${group('Reconciles or syncs with', rec, f => f.from === s.key ? f.to : f.from)}
-    </section>`;
+    </section>
+    ${usedInSection(processesUsing(st => st.system === s.key), st => st.system === s.key)}`;
   drFoot.innerHTML = `<span>${footText(s)}</span><button class="btn sm danger" data-act="delete-system">Delete system</button>`;
 }
 
@@ -1223,8 +1314,110 @@ function renderFlowDrawer(f) {
         ${end(b, isFlow ? 'Data lands here' : lk.label)}
       </ol>
       ${tools.length ? `<div class="tools"><span class="lbl">Tools & files touched</span>${tools.map(t => `<span class="tool-chip">${esc(t)}</span>`).join('')}</div>` : ''}
-    </section>`;
+    </section>
+    ${usedInSection(processesUsing(st => st.flow === f.key), st => st.flow === f.key)}`;
   drFoot.innerHTML = `<span>${footText(f)}</span><button class="btn sm danger" data-act="delete-flow">Delete connection</button>`;
+}
+
+const flowLabel = (f) => `${sysOf(f.from)?.name || '?'} ${f.kind === 'flow' ? '→' : '⇄'} ${sysOf(f.to)?.name || '?'}${f.name ? ' · ' + f.name : ''}`;
+/* Plain text, with web addresses made clickable. */
+const linkify = (t) => esc(t).replace(/https?:\/\/[^\s<]+[^\s<.,;:)]/g, (u) => {
+  const host = u.replace(/^https?:\/\//, '').split(/[/?#]/)[0].replace(/^www\./, '');
+  return `<a href="${u}" target="_blank" rel="noopener" title="${u}">${host} ↗</a>`;
+});
+
+function renderProcessDrawer(p) {
+  if (!p) return closeDrawer();
+  const systems = [...state.systems.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const flows = [...state.flows.values()].map(f => ({ f, label: flowLabel(f) })).sort((a, b) => a.label.localeCompare(b.label));
+  const fp = processFootprint(p);
+  const areas = [...new Set([...state.processes.values()].map(x => x.area).filter(Boolean))].sort();
+  let n = 0;
+  const stepHtml = (s, sec, i) => {
+    n++;
+    const sys = sysOf(s.system), f = s.flow && state.flows.get(s.flow);
+    const color = sys ? catOf(sys).color : 'var(--ink-faint)';
+    return `<li class="tl-step" data-sid="${esc(s.id)}" style="--c:${color}">
+      <span class="tl-num">${n}</span>
+      <div class="tl-card">
+        <span class="tl-peer"></span>
+        <textarea class="tl-text" data-sfield="text" rows="1" placeholder="Describe this step…" aria-label="Step ${n}">${esc(s.text)}</textarea>
+        <div class="tl-meta wrap">
+          <input class="tool-input who-input" data-sfield="who" value="${esc(s.who)}" placeholder="Who" aria-label="Who does step ${n}">
+          <select class="kind-select sys-select" data-sfield="system" aria-label="System for step ${n}">
+            <option value="">No system</option>
+            ${systems.map(x => `<option value="${esc(x.key)}" ${x.key === s.system ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+          </select>
+          <span class="tl-ctrl">
+            <button data-act="pstep-up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button data-act="pstep-down" aria-label="Move down" ${i === sec.steps.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="del" data-act="pstep-del" aria-label="Delete step">✕</button>
+          </span>
+        </div>
+        <div class="tl-meta">
+          <select class="link-select${f ? ' on' : ''}" data-sfield="flow" aria-label="Connection on the map for step ${n}">
+            <option value="">Not a connection on the map</option>
+            ${flows.map(x => `<option value="${esc(x.f.key)}" ${x.f.key === s.flow ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}
+          </select>
+          ${f ? `<button class="link-open" data-act="open-flow" data-id="${esc(f.key)}" title="Open this connection">Open ↗</button>` : ''}
+        </div>
+      </div>
+    </li>`;
+  };
+  const sections = p.sections.map((sec, si) => `
+    <section class="sec proc-sec" data-secid="${esc(sec.id)}">
+      <div class="sec-head">
+        <input class="sec-title" data-secfield="title" value="${esc(sec.title)}" placeholder="Section name" aria-label="Section name">
+        <span class="count">${sec.steps.length}</span>
+        <span class="tl-ctrl sec-ctrl">
+          <button data-act="sec-up" aria-label="Move section up" ${si === 0 ? 'disabled' : ''}>↑</button>
+          <button data-act="sec-down" aria-label="Move section down" ${si === p.sections.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="del" data-act="sec-del" aria-label="Delete section">✕</button>
+        </span>
+      </div>
+      <ol class="timeline">
+        ${sec.steps.map((s, i) => stepHtml(s, sec, i)).join('')}
+        <li class="tl-add"><span class="plus">+</span><button class="add" data-act="pstep-add">${sec.steps.length ? 'Add a step' : 'Add the first step'}</button></li>
+      </ol>
+    </section>`).join('');
+  const where = [...fp.n].map(sysOf).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const conns = [...fp.e].map(k => state.flows.get(k)).filter(Boolean);
+  const refs = p.reference.filter(t => t.rows.length || t.note).map(t => `
+    <section class="sec">
+      <div class="sec-head"><h3>${esc(t.title || 'Reference')}<span class="count">${t.rows.length || ''}</span></h3></div>
+      ${t.note ? `<p class="ref-note">${linkify(t.note)}</p>` : ''}
+      ${t.rows.length ? `<div class="ref-wrap"><table class="ref">
+        ${t.columns.length ? `<thead><tr>${t.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>` : ''}
+        <tbody>${t.rows.map(r => `<tr>${r.map(c => `<td>${linkify(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>` : ''}
+    </section>`).join('');
+  drScroll.innerHTML = `
+    <div class="dr-top">
+      <span class="kicker"><span class="proc-kicker">${procIcon(12)}</span>Process</span>
+      <button class="icon-btn" data-act="close" aria-label="Close">✕</button>
+    </div>
+    <div class="here" id="drHere" hidden></div>
+    <input class="dr-title" data-field="name" value="${esc(p.name)}" placeholder="Name this process" aria-label="Process name">
+    <label class="fld"><span>What it's for</span>
+      <textarea data-field="purpose" rows="2" placeholder="What this process achieves, and when it runs">${esc(p.purpose)}</textarea></label>
+    <div class="fld-row three">
+      <label class="fld"><span>Area</span><input data-field="area" value="${esc(p.area)}" list="procAreas" placeholder="e.g. Month close"></label>
+      <label class="fld"><span>How often</span><select data-field="frequency">
+        ${FREQUENCIES.map(q => `<option value="${esc(q)}" ${q === p.frequency ? 'selected' : ''}>${q || 'Not set'}</option>`).join('')}
+        ${p.frequency && !FREQUENCIES.includes(p.frequency) ? `<option selected>${esc(p.frequency)}</option>` : ''}
+      </select></label>
+      <label class="fld"><span>Owner</span><input data-field="owner" value="${esc(p.owner)}" placeholder="Who runs it"></label>
+    </div>
+    ${p.source ? `<p class="proc-src">Imported from ${esc(p.source)}</p>` : ''}
+    <datalist id="procAreas">${areas.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+    ${where.length || conns.length ? `<div class="where">
+      ${where.length ? `<div class="where-row"><span class="lbl">Happens in</span>${where.map(x => `<button class="sys-chip" data-act="open-sys" data-id="${esc(x.key)}">${iniChip(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
+      ${conns.length ? `<div class="where-row"><span class="lbl">Connections</span>${conns.map(f => `<button class="sys-chip conn-chip" data-act="open-flow" data-id="${esc(f.key)}" style="--mc:${methodOf(f).color}"><i></i>${esc(flowLabel(f))}</button>`).join('')}</div>` : ''}
+    </div>` : ''}
+    ${sections}
+    <div class="sec-add"><button class="btn sm" data-act="sec-add">+ Add a section</button></div>
+    ${refs}`;
+  drFoot.innerHTML = `<span>${footText(p)}</span><button class="btn sm danger" data-act="delete-process">Delete process</button>`;
 }
 
 function autosize(el) {
@@ -1244,7 +1437,10 @@ drawer.addEventListener('input', (e) => {
     edit(coll, key, (x) => { x[field] = v; }, { debounce: field, render: field === 'name' });
   } else if (el.dataset.sfield) {
     const sid = el.closest('[data-sid]').dataset.sid, field = el.dataset.sfield;
-    edit('flows', key, (x) => { const s = x.steps.find(s => s.id === sid); if (s) s[field] = v; }, { debounce: sid + field, render: field === 'text' });
+    edit(coll, key, (x) => { const s = findStep(x, sid); if (s) s[field] = v; }, { debounce: sid + field, render: field === 'text' });
+  } else if (el.dataset.secfield) {
+    const secId = el.closest('[data-secid]').dataset.secid;
+    edit(coll, key, (x) => { const sec = x.sections?.find(s => s.id === secId); if (sec) sec.title = v; }, { debounce: secId, render: false });
   }
 });
 drawer.addEventListener('change', (e) => {
@@ -1256,14 +1452,14 @@ drawer.addEventListener('change', (e) => {
     edit(coll, key, (x) => { x[field] = v; });
   } else if (el.dataset.sfield) {
     const sid = el.closest('[data-sid]').dataset.sid, field = el.dataset.sfield;
-    edit('flows', key, (x) => { const s = x.steps.find(s => s.id === sid); if (s) s[field] = v; });
+    edit(coll, key, (x) => { const s = findStep(x, sid); if (s) s[field] = v; });
   }
   renderDrawer();
 });
 drawer.addEventListener('focusin', (e) => {
   const el = e.target;
   const sid = el.closest?.('[data-sid]')?.dataset.sid;
-  const field = el.dataset?.sfield || el.dataset?.field;
+  const field = el.dataset?.sfield || el.dataset?.field || (el.dataset?.secfield && 'section');
   if (!field) return;
   me.editing = sid ? { sid, field } : { field };
   if (sid) me.step = sid;
@@ -1294,8 +1490,9 @@ drawer.addEventListener('keydown', (e) => {
   // Cmd/Ctrl+Enter in a step adds the next one right after it
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.closest('[data-sid]')) {
     e.preventDefault();
-    addStep(e.target.closest('[data-sid]').dataset.sid);
-  } else if (e.key === 'Enter' && e.target.matches('input.dr-title')) {
+    const sid = e.target.closest('[data-sid]').dataset.sid;
+    sel.type === 'process' ? addProcStep(null, sid) : addStep(sid);
+  } else if (e.key === 'Enter' && e.target.matches('input.dr-title, input.sec-title')) {
     e.target.blur();
   }
 });
@@ -1309,6 +1506,76 @@ drawer.addEventListener('click', async (e) => {
     case 'close': closeDrawer(); break;
     case 'open-flow': select('flow', btn.dataset.id); break;
     case 'open-sys': select('system', btn.dataset.id); break;
+    case 'open-proc': select('process', btn.dataset.id); break;
+    case 'pstep-add': addProcStep(btn.closest('[data-secid]').dataset.secid, null); break;
+    case 'pstep-up':
+    case 'pstep-down': {
+      const dir = act === 'pstep-up' ? -1 : 1;
+      edit('processes', key, (x) => {
+        const sec = sectionOf(x, sid); if (!sec) return;
+        const i = sec.steps.findIndex(s => s.id === sid), j = i + dir;
+        if (j < 0 || j >= sec.steps.length) return;
+        [sec.steps[i], sec.steps[j]] = [sec.steps[j], sec.steps[i]];
+      });
+      renderDrawer();
+      $(`[data-sid="${CSS.escape(sid)}"] [data-act="${act}"]`, drawer)?.focus();
+      break;
+    }
+    case 'pstep-del': {
+      const p = state.processes.get(key), sec = sectionOf(p, sid);
+      const idx = sec.steps.findIndex(s => s.id === sid), removed = clone(sec.steps[idx]);
+      const n = stepsOf(p).findIndex(s => s.id === sid) + 1;
+      edit('processes', key, (x) => { const s2 = x.sections.find(s => s.id === sec.id); if (s2) s2.steps = s2.steps.filter(s => s.id !== sid); });
+      renderDrawer();
+      toast(`Step ${n} deleted.`, { action: { label: 'Undo', fn: () => {
+        edit('processes', key, (x) => {
+          const s2 = x.sections.find(s => s.id === sec.id);
+          if (s2 && !findStep(x, removed.id)) s2.steps.splice(Math.min(idx, s2.steps.length), 0, removed);
+        });
+        if (sel?.id === key) renderDrawer();
+      } } });
+      break;
+    }
+    case 'sec-add': {
+      const sec = { id: rid('sec'), title: '', steps: [] };
+      edit('processes', key, (x) => { if (!x.sections.some(s => s.id === sec.id)) x.sections.push({ ...sec }); });
+      renderDrawer();
+      $(`[data-secid="${CSS.escape(sec.id)}"] .sec-title`, drawer)?.focus();
+      break;
+    }
+    case 'sec-up':
+    case 'sec-down': {
+      const secId = btn.closest('[data-secid]').dataset.secid, dir = act === 'sec-up' ? -1 : 1;
+      edit('processes', key, (x) => {
+        const i = x.sections.findIndex(s => s.id === secId), j = i + dir;
+        if (i < 0 || j < 0 || j >= x.sections.length) return;
+        [x.sections[i], x.sections[j]] = [x.sections[j], x.sections[i]];
+      });
+      renderDrawer();
+      break;
+    }
+    case 'sec-del': {
+      const p = state.processes.get(key);
+      const secId = btn.closest('[data-secid]').dataset.secid, idx = p.sections.findIndex(s => s.id === secId);
+      const removed = clone(p.sections[idx]);
+      if (removed.steps.length && !await confirmDialog({ title: `Delete “${removed.title || 'this section'}”?`, body: `Its ${removed.steps.length} step${removed.steps.length > 1 ? 's' : ''} will be removed for everyone.`, confirm: 'Delete section' })) return;
+      edit('processes', key, (x) => { x.sections = x.sections.filter(s => s.id !== secId); });
+      renderDrawer();
+      toast('Section deleted.', { action: { label: 'Undo', fn: () => {
+        edit('processes', key, (x) => { if (!x.sections.some(s => s.id === removed.id)) x.sections.splice(Math.min(idx, x.sections.length), 0, removed); });
+        if (sel?.id === key) renderDrawer();
+      } } });
+      break;
+    }
+    case 'delete-process': {
+      const p = state.processes.get(key);
+      const ok = await confirmDialog({ title: `Delete ${p.name}?`, body: `The process and its ${stepsOf(p).length} steps will be removed for everyone. Systems and connections on the map stay.`, confirm: 'Delete process' });
+      if (!ok) return;
+      closeDrawer();
+      await deleteEntity('processes', key);
+      renderProcCount();
+      break;
+    }
     case 'connect': newConnection({ from: key }); break;
     case 'swap': edit('flows', key, (x) => { [x.from, x.to] = [x.to, x.from]; }); renderDrawer(); break;
     case 'method': { const m = btn.dataset.m; edit('flows', key, (x) => { x.method = x.method === m ? '' : m; }); renderDrawer(); break; }
@@ -1370,6 +1637,24 @@ drawer.addEventListener('click', async (e) => {
     }
   }
 });
+
+function addProcStep(secId, afterSid) {
+  const key = sel.id, p = state.processes.get(key);
+  secId ||= sectionOf(p, afterSid)?.id;
+  const prev = afterSid ? findStep(p, afterSid) : p.sections.find(s => s.id === secId)?.steps.at(-1);
+  // A new step usually happens in the same place, by the same person, as the one before it
+  const step = { id: rid('st'), text: '', who: prev?.who || '', system: prev?.system || '', flow: '' };
+  edit('processes', key, (x) => {
+    const sec = x.sections.find(s => s.id === secId);
+    if (!sec || findStep(x, step.id)) return;
+    const i = afterSid ? sec.steps.findIndex(s => s.id === afterSid) : -1;
+    if (i >= 0) sec.steps.splice(i + 1, 0, { ...step }); else sec.steps.push({ ...step });
+  });
+  renderDrawer();
+  const ta = $(`[data-sid="${CSS.escape(step.id)}"] textarea`, drawer);
+  ta?.focus();
+  ta?.closest('.tl-step')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
 
 function addStep(afterSid) {
   const key = sel.id;
@@ -1513,9 +1798,15 @@ function runSearch() {
         title: `${a?.name} ${f.kind === 'flow' ? '→' : '⇄'} ${b?.name}`, sub: stepIdx >= 0 && !hit(f.name) ? `Step ${stepIdx + 1}` : (f.name || LINK_KINDS[f.kind].label), s: a });
     }
   }
-  results = results.slice(0, 12);
+  for (const p of state.processes.values()) {
+    const steps = stepsOf(p);
+    const head = hit(p.name, p.area, p.purpose, p.owner);
+    const stepIdx = head ? -1 : steps.findIndex(s => hit(s.text, s.who));
+    if (head || stepIdx >= 0) results.push({ type: 'process', id: p.key, step: stepIdx >= 0 ? stepIdx : null, title: p.name || 'Untitled process', sub: stepIdx >= 0 ? `Process · step ${stepIdx + 1}` : 'Process', proc: true });
+  }
+  results = results.slice(0, 14);
   activeResult = 0;
-  resultsEl.innerHTML = results.length ? results.map((r, i) => `<button data-i="${i}" class="${i === 0 ? 'active' : ''}">${iniChip(r.s, 'ini')}<span>${esc(r.title)}</span><span class="r-sub">${esc(r.sub)}</span></button>`).join('')
+  resultsEl.innerHTML = results.length ? results.map((r, i) => `<button data-i="${i}" class="${i === 0 ? 'active' : ''}">${r.proc ? `<span class="ini proc-ini">${procIcon(12)}</span>` : iniChip(r.s, 'ini')}<span>${esc(r.title)}</span><span class="r-sub">${esc(r.sub)}</span></button>`).join('')
     : `<div class="r-empty">Nothing matches “${esc(searchInput.value)}”.</div>`;
   resultsEl.hidden = false;
 }
@@ -1536,6 +1827,292 @@ searchInput.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { searchInput.value = ''; searchInput.blur(); }
 });
 resultsEl.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pickResult(+b.dataset.i); } });
+
+/* =====================================================================================
+   The process list: every process, grouped by area
+   ===================================================================================== */
+const procMenu = $('#procMenu'), procFilter = $('#procFilter');
+function renderProcCount() {
+  const n = state.processes.size;
+  $('#procCount').textContent = n || '';
+  if (!procMenu.hidden) renderProcList();
+}
+function renderProcList() {
+  const q = procFilter.value.trim().toLowerCase();
+  const hit = (...xs) => !q || xs.some(x => String(x || '').toLowerCase().includes(q));
+  const list = [...state.processes.values()].filter(p => hit(p.name, p.area, p.owner, p.purpose))
+    .sort((a, b) => (a.area || '~').localeCompare(b.area || '~') || a.name.localeCompare(b.name));
+  const groups = new Map();
+  for (const p of list) (groups.get(p.area || 'Other') || groups.set(p.area || 'Other', []).get(p.area || 'Other')).push(p);
+  $('#procList').innerHTML = !state.processes.size
+    ? `<div class="r-empty">No processes yet. Add one, or import instructions from a file.</div>`
+    : !list.length ? `<div class="r-empty">Nothing matches “${esc(procFilter.value)}”.</div>`
+    : [...groups].map(([area, ps]) => `<h4>${esc(area)}</h4>` + ps.map(p => {
+      const fp = processFootprint(p), n = stepsOf(p).length;
+      return `<button data-proc="${esc(p.key)}" class="${sel?.type === 'process' && sel.id === p.key ? 'active' : ''}">
+        <span class="ini proc-ini">${procIcon(12)}</span>
+        <span class="pl-main"><span class="pl-name">${esc(p.name || 'Untitled process')}</span>
+        <span class="pl-sub">${n} step${n === 1 ? '' : 's'} · ${fp.n.size} system${fp.n.size === 1 ? '' : 's'}${p.frequency ? ' · ' + esc(p.frequency) : ''}</span></span></button>`;
+    }).join('')).join('');
+}
+function toggleProcMenu(open = procMenu.hidden) {
+  procMenu.hidden = !open;
+  $('#procBtn').setAttribute('aria-expanded', open);
+  if (open) {
+    const r = $('#procBtn').getBoundingClientRect();
+    procMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - procMenu.offsetWidth - 8)) + 'px';
+    procFilter.value = ''; renderProcList(); procFilter.focus();
+  }
+}
+$('#procBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleProcMenu(); });
+document.addEventListener('click', (e) => { if (!procMenu.hidden && !procMenu.contains(e.target)) toggleProcMenu(false); });
+procFilter.addEventListener('input', renderProcList);
+procFilter.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.stopPropagation(); toggleProcMenu(false); }
+  else if (e.key === 'Enter') { e.preventDefault(); $('#procList [data-proc]')?.click(); }
+});
+procMenu.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-proc], [data-pact]');
+  if (!b) return;
+  toggleProcMenu(false);
+  if (b.dataset.proc) select('process', b.dataset.proc);
+  else if (b.dataset.pact === 'new') newProcess();
+  else if (b.dataset.pact === 'import') pickImportFile();
+});
+
+function newProcess() {
+  const p = { key: rid('proc'), name: '', area: '', purpose: '', frequency: '', owner: '', source: '',
+    sections: [{ id: rid('sec'), title: 'Steps', steps: [] }], reference: [] };
+  createEntity('processes', p);
+  renderProcCount();
+  select('process', p.key, { focus: false });
+  $('input.dr-title', drawer)?.focus();
+}
+
+/* =====================================================================================
+   Importing processes
+   -------------------------------------------------------------------------------------
+   An import file (format in imports/README.md) lists systems, connections and processes.
+   Systems are matched to ones already on the map by key or name; connections by key, or by
+   the two systems they join plus their name. Nothing on the map is overwritten: a matching
+   connection with no steps yet gets the imported steps, anything else is left alone.
+   Files listed in imports/index.json ship with the app and are applied automatically, once,
+   by whoever opens it first after a deploy (a `meta` record remembers each one).
+   ===================================================================================== */
+const norm = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function planImport(pack, { replace = false } = {}) {
+  if (!pack || typeof pack !== 'object' || !['systems', 'connections', 'processes'].some(k => Array.isArray(pack[k]))) {
+    throw new Error("This doesn't look like a processes import file.");
+  }
+  const plan = { systems: [], flows: [], fills: [], processes: [], replaces: [], kept: { systems: [], flows: [], processes: [] }, warnings: [] };
+  const byName = new Map([...state.systems.values()].map(s => [norm(s.name), s.key]));
+  const sysRef = new Map();
+  for (const raw of arr(pack.systems)) {
+    const name = str(raw?.name).trim();
+    if (!name) continue;
+    const names = [name, ...arr(raw.match).map(str)];
+    let key = (state.systems.has(raw.key) && raw.key) || names.map(n => byName.get(norm(n))).find(Boolean);
+    if (key) {
+      if (state.systems.has(key)) plan.kept.systems.push(sysOf(key).name);
+    } else {
+      key = raw.key && /^[\w-]{1,100}$/.test(raw.key) && !plan.systems.some(x => x.key === raw.key) ? raw.key : rid('sys');
+      plan.systems.push({ key, name, category: CAT[raw.category] ? raw.category : 'other', description: str(raw.description), owner: str(raw.owner), url: str(raw.url), x: 0, y: 0 });
+    }
+    for (const n of [raw.key, ...names]) if (n) { sysRef.set(norm(n), key); byName.set(norm(n), key); }
+  }
+  const resolveSys = (ref) => !ref ? '' : sysRef.get(norm(ref)) || (state.systems.has(ref) ? ref : byName.get(norm(ref)) || '');
+  const nameOf = (k) => sysOf(k)?.name || plan.systems.find(s => s.key === k)?.name || '?';
+  plan.label = (f) => `${nameOf(f.from)} ${f.kind === 'flow' ? '→' : '⇄'} ${nameOf(f.to)}${f.name ? ' · ' + f.name : ''}`;
+
+  const flowRef = new Map();
+  for (const raw of arr(pack.connections)) {
+    const from = resolveSys(raw?.from), to = resolveSys(raw?.to);
+    if (!from || !to || from === to) { plan.warnings.push(`Skipped the connection “${str(raw?.name) || str(raw?.key)}”: couldn't find ${!from ? raw?.from : raw?.to}.`); continue; }
+    const kind = LINK_KINDS[raw.kind] ? raw.kind : 'flow';
+    const data = {
+      from, to, kind, method: METHODS[raw.method] ? raw.method : '', name: str(raw.name), description: str(raw.description),
+      frequency: str(raw.frequency), owner: str(raw.owner),
+      steps: arr(raw.steps).map(s => ({ id: rid('st'), kind: SK[s?.kind] ? s.kind : 'other', text: str(s?.text), tool: str(s?.tool) })),
+    };
+    const joins = (f) => f.kind === kind && ((f.from === from && f.to === to) || (kind !== 'flow' && f.from === to && f.to === from));
+    const hit = (raw.key && state.flows.get(raw.key)) || [...state.flows.values()].find(f => joins(f) && (!f.name || !data.name || norm(f.name) === norm(data.name)));
+    let key;
+    if (hit) {
+      key = hit.key;
+      if (!hit.steps.length && data.steps.length) plan.fills.push({ key, data, label: flowLabel(hit) });
+      else plan.kept.flows.push(flowLabel(hit));
+    } else {
+      key = raw.key && /^[\w-]{1,100}$/.test(raw.key) && !plan.flows.some(x => x.key === raw.key) ? raw.key : rid('flow');
+      plan.flows.push({ key, ...data });
+    }
+    if (raw.key) flowRef.set(raw.key, key);
+  }
+  const resolveFlow = (ref) => !ref ? '' : flowRef.get(ref) || (state.flows.has(ref) ? ref : '');
+
+  for (const raw of arr(pack.processes)) {
+    const name = str(raw?.name).trim();
+    if (!name) continue;
+    const existing = (raw.key && state.processes.get(raw.key)) || [...state.processes.values()].find(x => norm(x.name) === norm(name));
+    const key = existing?.key || (raw.key && /^[\w-]{1,100}$/.test(raw.key) ? raw.key : rid('proc'));
+    const sections = arr(raw.sections).map(sec => ({
+      title: str(sec?.title),
+      steps: arr(sec?.steps).map(st => {
+        const system = resolveSys(st?.system), flow = resolveFlow(st?.connection);
+        if (st?.system && !system) plan.warnings.push(`${name}: couldn't find the system “${st.system}”.`);
+        if (st?.connection && !flow) plan.warnings.push(`${name}: couldn't find the connection “${st.connection}”.`);
+        return { text: str(st?.text), who: str(st?.who), system, flow };
+      }),
+    }));
+    const p = normalizeProcess(key, { ...raw, name, sections, updatedAt: 0, updatedBy: '' });
+    if (!existing) plan.processes.push(p);
+    else (replace ? plan.replaces : plan.kept.processes).push(p);
+  }
+  return plan;
+}
+
+const importSummary = (plan) => {
+  const parts = [[plan.processes.length + plan.replaces.length, 'process', 'processes'], [plan.systems.length, 'system', 'systems'], [plan.flows.length + plan.fills.length, 'connection', 'connections']]
+    .filter(([n]) => n).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
+  return parts.length ? parts.join(', ') : '';
+};
+
+/* New systems go next to something they connect to (to the right of what feeds them, to the
+   left of what they feed), and anything unconnected in a row under the map. */
+function placeNewSystems(plan) {
+  const at = new Map([...state.systems.values()].map(s => [s.key, s]));
+  const spots = [...at.values()].map(s => ({ x: s.x, y: s.y }));
+  const free = (p) => !spots.some(q => Math.abs(q.x - p.x) < NODE_W + 40 && Math.abs(q.y - p.y) < NODE_H + 70);
+  const findFree = (c) => {
+    for (let r = 0; r < 14; r++) {
+      for (const [dx, dy] of [[0, 0], [0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const p = { x: Math.round((c.x + dx * r * (NODE_W + 80)) / 10) * 10, y: Math.round((c.y + dy * r * 170) / 10) * 10 };
+        if (free(p)) return p;
+      }
+    }
+    return c;
+  };
+  const b = boundsOf([...at.values()]) || { x1: 0, x2: 0, y1: 0, y2: 0 };
+  let rowX = b.x1 + NODE_W / 2;
+  const pending = [...plan.systems];
+  const links = [...plan.flows, ...plan.fills.map(x => x.data), ...state.flows.values()];
+  while (pending.length) {
+    let placed = false;
+    for (const s of [...pending]) {
+      const f = links.find(f => (f.from === s.key && at.has(f.to)) || (f.to === s.key && at.has(f.from)));
+      if (!f) continue;
+      const a = at.get(f.from === s.key ? f.to : f.from);
+      const dir = f.kind !== 'flow' ? 0 : f.to === s.key ? 1 : -1;
+      Object.assign(s, findFree({ x: a.x + dir * 440, y: a.y + (dir ? 0 : 170) }));
+      spots.push({ x: s.x, y: s.y }); at.set(s.key, s); pending.splice(pending.indexOf(s), 1);
+      placed = true;
+    }
+    if (!placed) {
+      const s = pending.shift();
+      Object.assign(s, findFree({ x: rowX, y: b.y2 + 150 }));
+      rowX = s.x + NODE_W + 80;
+      spots.push({ x: s.x, y: s.y }); at.set(s.key, s);
+    }
+  }
+}
+
+async function applyImport(plan) {
+  placeNewSystems(plan);
+  const systemsSaved = Promise.all(plan.systems.map(s => createEntity('systems', s)));
+  // On screen straight away, but saved only once their systems are: the platform rejects a
+  // reference to a record that doesn't exist yet. (Teammates' edits aren't pulled in while
+  // saves are pending, so nothing here gets dropped in the meantime.)
+  for (const f of plan.flows) { stamp(f); state.flows.set(f.key, f); }
+  for (const { key, data } of plan.fills) {
+    edit('flows', key, (x) => {
+      if (x.steps.length) return;
+      x.steps = clone(data.steps);
+      for (const k of ['method', 'name', 'description', 'frequency', 'owner']) if (!x[k] && data[k]) x[k] = data[k];
+    }, { render: false });
+  }
+  for (const p of plan.processes) createEntity('processes', p);
+  for (const p of plan.replaces) edit('processes', p.key, (x) => { const { key, updatedAt, updatedBy, ...rest } = clone(p); Object.assign(x, rest); }, { render: false });
+  renderCanvas();
+  if (sel) renderDrawer();
+  await systemsSaved;
+  for (const f of plan.flows) createEntity('flows', f);
+}
+
+/* ⋯ → Import processes: pick a file, see exactly what it would add, then add it. */
+function pickImportFile() {
+  const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    let pack;
+    try { pack = JSON.parse(await file.text()); } catch { toast("That file isn't a processes import file (it isn't valid JSON).", { error: true }); return; }
+    importDialog(pack, file.name);
+  });
+  input.click();
+}
+
+async function importDialog(pack, fileName) {
+  let plan;
+  try { plan = planImport(pack); } catch (err) { toast(err.message, { error: true }); return; }
+  const list = (title, items, open = false) => items.length ? `<details class="imp-list"${open ? ' open' : ''}><summary>${esc(title)}<b>${items.length}</b></summary>
+    <ul>${items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></details>` : '';
+  const kept = [...plan.kept.systems, ...plan.kept.flows];
+  const values = await openDialog(`<form method="dialog" class="imp">
+    <h2>Import ${esc(str(pack.name) || fileName)}</h2>
+    <p class="d-sub">This adds to the map for everyone at BibleProject. Nothing already on the map is changed.</p>
+    ${list('New processes', plan.processes.map(p => `${p.name} (${stepsOf(p).length} steps)`), true)}
+    ${list('New systems', plan.systems.map(s => s.name))}
+    ${list('New connections', plan.flows.map(plan.label))}
+    ${list('Connections already on the map that get these steps', plan.fills.map(x => x.label))}
+    ${list('Already on the map, left as they are', kept)}
+    ${plan.kept.processes.length ? `<label class="imp-replace"><input type="checkbox" name="replace">
+      <span>Replace ${plan.kept.processes.length === 1 ? 'the process' : `${plan.kept.processes.length} processes`} already here (${esc(plan.kept.processes.map(p => p.name).join(', '))}) with the version in this file. Edits made in the app since are lost.</span></label>` : ''}
+    ${plan.warnings.length ? `<div class="d-err">${plan.warnings.map(esc).join('<br>')}</div>` : ''}
+    <div class="d-actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok" autofocus>Import</button></div>
+  </form>`, (fd) => ({ replace: fd.get('replace') === 'on' }));
+  if (!values) return;
+  if (values.replace) plan = planImport(pack, { replace: true });
+  const summary = importSummary(plan);
+  if (!summary) { toast('Everything in that file is already here.'); return; }
+  await applyImport(plan);
+  afterImport(plan, `Imported ${summary}.`);
+}
+
+function afterImport(plan, msg) {
+  const ps = [...plan.processes, ...plan.replaces];
+  toast(msg, { ms: 9000, action: ps.length ? { label: ps.length === 1 ? 'Open it' : 'Show processes', fn: () => ps.length === 1 ? select('process', ps[0].key) : toggleProcMenu(true) } : null });
+  if (plan.systems.length && !sel) fitAll();
+}
+
+/* Import files that ship with the app. The marker is written first, so when two people open
+   the app at the same moment only one of them does the import. */
+async function applyBundledImports() {
+  let index;
+  try {
+    const r = await fetch('imports/index.json', { cache: 'no-cache' });
+    if (!r.ok) return;
+    index = await r.json();
+  } catch { return; }   // none shipped, or opened from disk
+  for (const file of arr(index?.files)) {
+    if (typeof file !== 'string' || !/^[\w.-]+\.json$/.test(file)) continue;
+    const id = `import-${file}`.slice(0, 128);
+    if (state.meta.has(id)) continue;
+    let plan, pack;
+    try {
+      const r = await fetch(`imports/${file}`, { cache: 'no-cache' });
+      if (!r.ok) continue;
+      pack = await r.json();
+      plan = planImport(pack);
+    } catch { continue; }
+    try { await store.put('meta', id, { data: { at: Date.now(), by: user.name || '', file } }); }
+    catch { continue; }   // a teammate got there first, or we can't write — either way, not now
+    state.meta.set(id, { key: id });
+    const summary = importSummary(plan);
+    if (!summary) continue;
+    await applyImport(plan);
+    afterImport(plan, `Added ${summary} from ${str(pack.name) || file}.`);
+  }
+}
 
 /* =====================================================================================
    Menu actions: tidy layout, export
@@ -1592,6 +2169,7 @@ function exportJSON() {
     exportedAt: new Date().toISOString(),
     systems: [...state.systems.values()],
     connections: [...state.flows.values()].map(f => ({ ...f, fromName: sysOf(f.from)?.name, toName: sysOf(f.to)?.name })),
+    processes: [...state.processes.values()],
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
   const a = Object.assign(document.createElement('a'), { href: url, download: `finance-data-flows-${new Date().toISOString().slice(0, 10)}.json` });
@@ -1605,13 +2183,14 @@ document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e
 menu.addEventListener('click', (e) => {
   const b = e.target.closest('[data-menu]'); if (!b) return;
   menu.hidden = true;
-  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, refresh: () => reload().then(() => toast('Up to date.')), live: liveStatus })[b.dataset.menu]();
+  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, import: pickImportFile, refresh: () => reload().then(() => toast('Up to date.')), live: liveStatus })[b.dataset.menu]();
 });
 
 /* =====================================================================================
    Wiring
    ===================================================================================== */
 $('#addSystemBtn').addEventListener('click', () => newSystem());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !procMenu.hidden) { e.stopPropagation(); toggleProcMenu(false); } }, true);
 $('#emptyAdd').addEventListener('click', () => newSystem());
 $('#addFlowBtn').addEventListener('click', () => newConnection(sel?.type === 'system' ? { from: sel.id } : {}));
 $('#zoomIn').addEventListener('click', () => zoomAnimated(1.25));
@@ -1826,7 +2405,7 @@ function ingestPresence(list) {
       email: typeof d.email === 'string' ? d.email : '',
       avatar: /^https?:\/\//i.test(d.avatar || '') ? d.avatar : '',
       color: safeColor(d.color, hashColor(d.email || r.key)),
-      sel: d.sel && typeof d.sel.id === 'string' && (d.sel.type === 'system' || d.sel.type === 'flow') ? d.sel : null,
+      sel: d.sel && typeof d.sel.id === 'string' && ['system', 'flow', 'process'].includes(d.sel.type) ? d.sel : null,
       editing: d.editing && typeof d.editing === 'object' ? d.editing : null,
       step: typeof d.step === 'string' ? d.step.slice(0, 64) : null,
       away: !!d.away, self,
@@ -1868,6 +2447,7 @@ function whereIs(p) {
   if (p.away) return 'away from the map';
   if (!p.sel) return 'looking around the map';
   if (p.sel.type === 'system') return `viewing ${sysOf(p.sel.id)?.name || 'a system'}`;
+  if (p.sel.type === 'process') return `viewing ${state.processes.get(p.sel.id)?.name || 'a process'}`;
   const f = state.flows.get(p.sel.id);
   return f ? `viewing ${sysOf(f.from)?.name} ${f.kind === 'flow' ? '→' : '⇄'} ${sysOf(f.to)?.name}` : 'viewing a connection';
 }
@@ -1903,13 +2483,13 @@ function lookers() {
 }
 const lookerName = (p) => p.self ? 'You (other window)' : p.name;
 const lookerShort = (p) => p.self ? 'You' : (p.first || p.name);
-function stepNo(flowId, sid) {
-  const i = state.flows.get(flowId)?.steps.findIndex(s => s.id === sid) ?? -1;
+function stepNo(type, id, sid) {
+  const i = stepsOf(mapOf(collOf(type)).get(id)).findIndex(s => s.id === sid);
   return i >= 0 ? i + 1 : null;
 }
 /* "Jordan is looking at step 3" — what shows when you hover what they have open. */
 function lookerLine(p) {
-  const n = p.sel?.type === 'flow' ? stepNo(p.sel.id, p.editing?.sid || p.step) : null;
+  const n = p.sel && p.sel.type !== 'system' ? stepNo(p.sel.type, p.sel.id, p.editing?.sid || p.step) : null;
   if (p.editing && n) return `${lookerName(p)} is editing step ${n}`;
   if (p.editing) return `${lookerName(p)} is editing this`;
   if (n) return `${lookerName(p)} is looking at step ${n}`;
@@ -1984,9 +2564,8 @@ function renderDrawerPresence() {
   const here = $('#drHere');
   if (!here || !sel) return;
   const ps = drawerLookers();
-  const f = sel.type === 'flow' ? state.flows.get(sel.id) : null;
   here.innerHTML = ps.map(p => {
-    const n = f ? stepNo(sel.id, p.editing?.sid || p.step) : null;
+    const n = sel.type !== 'system' ? stepNo(sel.type, sel.id, p.editing?.sid || p.step) : null;
     const what = p.editing && n ? ` is editing step ${n}` : p.editing ? ' is editing' : n ? ` is looking at step ${n}` : ' is here too';
     return `<span class="here-chip" style="--pc:${p.color}"><i></i>${esc(lookerShort(p))}${what}</span>`;
   }).join('');
@@ -2077,6 +2656,9 @@ setView({ x: 0, y: 0, k: 1 });
   if (store.mode === 'local') banner('Local preview: the platform isn’t available here, so changes are saved in this browser only. Deploy to bp-vibes to share the map with the team.');
   renderSaveState();
   const loaded = await load();
-  if (loaded) requestAnimationFrame(() => fitAll(false));   // after layout, so the size is right
+  if (loaded) {
+    await applyBundledImports();
+    requestAnimationFrame(() => fitAll(false));   // after layout, so the size is right
+  }
   startPresence();
 })();
