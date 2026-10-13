@@ -90,7 +90,7 @@ last checked for others, whether its own updates are going out, and who's here.
 | Pick the relationship | *Data flow* (one way), *Reconciles with* (compare/tie-out), *Two-way sync* |
 | Document a process | Open a connection → **Add a step**. Each step has a type (Export, Transform, Check, Import, Other) and an optional tool or file. <kbd>Ctrl/⌘</kbd>+<kbd>Enter</kbd> adds the next step. |
 | Reorder or remove steps | Hover a step → ↑ ↓ ✕ (deleting offers Undo) |
-| Move things around | Drag systems; **⋯ → Tidy layout** arranges them left → right by data flow |
+| Move things around | Drag systems; **⋯ → Tidy layout** arranges them left → right by data flow (loops are fine, and it can be undone straight after) |
 | Find anything | <kbd>/</kbd> searches systems, connections and step text |
 | Navigate | Scroll or pinch to zoom, drag to pan, <kbd>F</kbd> fits everything, <kbd>Esc</kbd> closes the panel |
 | Back up | **⋯ → Export as JSON** |

@@ -2214,51 +2214,116 @@ async function applyBundledImports() {
 /* =====================================================================================
    Menu actions: tidy layout, export
    ===================================================================================== */
-async function tidyLayout() {
-  const ok = await confirmDialog({ title: 'Tidy the layout?', body: 'Systems will be arranged left to right in the order data flows through them. This moves them for everyone.', confirm: 'Tidy layout' });
-  if (!ok) return;
+/* Tidy layout: data flows left to right, in columns.
+   1. Loops (A → B → … → A) are broken by setting aside the link that closes each one, so they
+      can't push systems ever further right.
+   2. Each system goes one column right of the furthest thing that feeds it; pure sources sit
+      just left of what they feed.
+   3. Systems joined only by reconcile/sync links sit in their partner's column; systems with no
+      links at all get a column of their own at the far right.
+   4. Within each column, systems are ordered and positioned next to what they connect to (a
+      few up-and-down passes), so lines are short and cross as little as possible. */
+function computeLayout() {
+  const COL_W = NODE_W + 180, ROW_H = NODE_H + 52;
   const nodes = [...state.systems.values()];
-  const layer = new Map(nodes.map(s => [s.key, 0]));
-  const directed = [...state.flows.values()].filter(f => f.kind === 'flow' && sysOf(f.from) && sysOf(f.to));
-  for (let i = 0; i < nodes.length; i++) {
-    let changed = false;
-    for (const f of directed) {
-      const want = layer.get(f.from) + 1;
-      if (want > layer.get(f.to) && want < nodes.length) { layer.set(f.to, want); changed = true; }
+  const keys = new Set(nodes.map(s => s.key));
+  const links = [...state.flows.values()].filter(f => keys.has(f.from) && keys.has(f.to) && f.from !== f.to);
+  const out = new Map(nodes.map(s => [s.key, new Set()]));
+  for (const f of links) if (f.kind === 'flow') out.get(f.from).add(f.to);
+  const indeg = new Map(nodes.map(s => [s.key, 0]));
+  for (const [, vs] of out) for (const v of vs) indeg.set(v, indeg.get(v) + 1);
+
+  // 1. Depth-first from the sources; a link back to a system still being explored closes a loop.
+  const dag = new Map(nodes.map(s => [s.key, []])), seen = new Map();
+  const visit = (u) => {
+    seen.set(u, 1);
+    for (const v of out.get(u)) {
+      if (seen.get(v) === 1) continue;
+      dag.get(u).push(v);
+      if (!seen.has(v)) visit(v);
     }
-    if (!changed) break;
-  }
-  // Pull sources right up next to what they feed, so nothing floats at the far left alone
+    seen.set(u, 2);
+  };
+  const byName = (a, b) => sysOf(a).name.localeCompare(sysOf(b).name);
+  for (const k of [...keys].sort((a, b) => indeg.get(a) - indeg.get(b) || byName(a, b))) if (!seen.has(k)) visit(k);
+  const preds = new Map(nodes.map(s => [s.key, []]));
+  for (const [u, vs] of dag) for (const v of vs) preds.get(v).push(u);
+
+  // 2. Longest path from the sources, then sources pulled right up to what they feed.
+  const layer = new Map();
+  const depth = (v) => {
+    if (layer.has(v)) return layer.get(v);
+    layer.set(v, 0);
+    const d = preds.get(v).length ? Math.max(...preds.get(v).map(depth)) + 1 : 0;
+    layer.set(v, d);
+    return d;
+  };
+  nodes.forEach(s => depth(s.key));
   for (const s of nodes) {
-    const outs = directed.filter(f => f.from === s.key).map(f => layer.get(f.to));
-    if (outs.length && !directed.some(f => f.to === s.key)) layer.set(s.key, Math.max(0, Math.min(...outs) - 1));
+    const succ = dag.get(s.key);
+    if (!preds.get(s.key).length && succ.length) layer.set(s.key, Math.max(0, Math.min(...succ.map(v => layer.get(v))) - 1));
   }
-  // Systems joined only by reconcile/sync links sit beside their partner
-  for (const f of state.flows.values()) {
-    if (f.kind === 'flow') continue;
-    const [a, b] = [f.from, f.to];
-    const lone = (k) => !directed.some(d => d.from === k || d.to === k);
-    if (lone(b) && !lone(a)) layer.set(b, layer.get(a));
-    else if (lone(a) && !lone(b)) layer.set(a, layer.get(b));
+
+  // 3. Systems with no data flows of their own.
+  const directed = new Set([...dag].flatMap(([u, vs]) => vs.length ? [u, ...vs] : []));
+  const nbrs = new Map(nodes.map(s => [s.key, new Set()]));
+  for (const f of links) { nbrs.get(f.from).add(f.to); nbrs.get(f.to).add(f.from); }
+  const maxLayer = Math.max(0, ...[...directed].map(k => layer.get(k)));
+  const loose = [];
+  for (const s of nodes) {
+    if (directed.has(s.key)) continue;
+    const partner = [...nbrs.get(s.key)].find(k => directed.has(k));
+    if (partner) layer.set(s.key, layer.get(partner)); else loose.push(s.key);
   }
+  for (const k of loose) layer.set(k, nbrs.get(k).size ? maxLayer : maxLayer + 1);
+
+  // 4. Order within columns by the average position of neighbours, sweeping both ways.
   const cols = new Map();
-  for (const s of nodes) (cols.get(layer.get(s.key)) || cols.set(layer.get(s.key), []).get(layer.get(s.key))).push(s);
-  const target = new Map();
-  for (const l of [...cols.keys()].sort((a, b) => a - b)) {
-    const list = cols.get(l);
-    const bary = (s) => {
-      const ps = directed.filter(f => f.to === s.key).map(f => target.get(f.from)?.y).filter(v => v != null);
-      return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : s.y;
-    };
-    list.sort((a, b) => bary(a) - bary(b));
-    list.forEach((s, i) => target.set(s.key, { x: l * 420, y: (i - (list.length - 1) / 2) * 170 }));
+  for (const s of [...nodes].sort((a, b) => a.y - b.y)) (cols.get(layer.get(s.key)) || cols.set(layer.get(s.key), []).get(layer.get(s.key))).push(s.key);
+  const order = [...cols.keys()].sort((a, b) => a - b);
+  const y = new Map();
+  const place = () => order.forEach(l => cols.get(l).forEach((k, i) => y.set(k, (i - (cols.get(l).length - 1) / 2) * ROW_H)));
+  place();
+  const bary = (k, fromLayers) => {
+    const ns = [...nbrs.get(k)].filter(n => fromLayers(layer.get(n)));
+    return ns.length ? ns.reduce((a, n) => a + y.get(n), 0) / ns.length : y.get(k);
+  };
+  for (let pass = 0; pass < 6; pass++) {
+    const seq = pass % 2 ? [...order].reverse() : order;
+    for (const l of seq) {
+      const near = (m) => pass % 2 ? m > l : m < l;
+      const want = new Map(cols.get(l).map(k => [k, bary(k, (m) => near(m) || m === l)]));
+      cols.get(l).sort((a, b) => want.get(a) - want.get(b));
+      // Sit each system as close to its neighbours as the spacing allows, then centre the column on them.
+      const list = cols.get(l);
+      let prev = -Infinity;
+      for (const k of list) { const v = Math.max(want.get(k), prev + ROW_H); y.set(k, v); prev = v; }
+      const shift = list.reduce((a, k) => a + want.get(k) - y.get(k), 0) / list.length;
+      for (const k of list) y.set(k, y.get(k) + shift);
+    }
   }
-  for (const s of nodes) {
-    const t = target.get(s.key);
-    if (t.x !== s.x || t.y !== s.y) edit('systems', s.key, (x) => { x.x = t.x; x.y = t.y; }, { render: false });
+  const x0 = order[0] || 0;
+  return new Map(nodes.map(s => [s.key, {
+    x: (layer.get(s.key) - x0) * COL_W,
+    y: Math.round(y.get(s.key) / 10) * 10,
+  }]));
+}
+
+async function tidyLayout() {
+  const ok = await confirmDialog({ title: 'Tidy the layout?', body: 'Systems will be arranged left to right in the order data flows through them. This moves them for everyone, and you can undo it straight after.', confirm: 'Tidy layout' });
+  if (!ok) return;
+  const before = new Map([...state.systems.values()].map(s => [s.key, { x: s.x, y: s.y }]));
+  const target = computeLayout();
+  moveSystems(target);
+  fitAll();
+  toast('Layout tidied.', { ms: 12000, action: { label: 'Undo', fn: () => { moveSystems(before); fitAll(); } } });
+}
+function moveSystems(positions) {
+  for (const [key, t] of positions) {
+    const s = sysOf(key);
+    if (s && (t.x !== s.x || t.y !== s.y)) edit('systems', key, (x) => { x.x = t.x; x.y = t.y; }, { render: false });
   }
   renderCanvas();
-  fitAll();
 }
 
 function exportJSON() {
