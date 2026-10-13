@@ -1587,6 +1587,75 @@ async function tidyLayout() {
   fitAll();
 }
 
+/* =====================================================================================
+   Clean up: take out what was added to the map after a given date
+   -------------------------------------------------------------------------------------
+   For putting this map back the way it was before the processes import (October 2026),
+   which added systems and connections this version of the app shows all on one map.
+   Shows exactly what it will delete and asks first; nothing goes without that.
+   ===================================================================================== */
+const IMPORTED_SYSTEMS = ['sys-cass', 'sys-banks', 'sys-salesforce', 'sys-gift-portals', 'sys-finance-inbox', 'sys-gdrive',
+  'sys-mailroom', 'sys-patreon', 'sys-looker', 'sys-inventory', 'sys-fixed-assets', 'sys-payroll'];
+const IMPORTED_FLOWS = ['c-eft-portal-sf', 'c-eft-email-sf', 'c-eft-tieout', 'c-ncf-sf', 'c-fidelity-sf', 'c-chariot-cass',
+  'c-patreon-sf', 'c-giving-bulk-sf', 'c-checks-cass', 'c-checks-sf', 'c-mail-drive', 'c-budget-acumatica', 'c-cass-acu-rec',
+  'c-banks-acu-rec', 'c-inventory-acu', 'c-fa-acu', 'c-payroll-acu', 'c-looker-acu'];
+/* Keys made in the app start with the time they were made, e.g. "sys-mgp0abcd…". */
+function createdAt(key) {
+  // Exactly 8 time characters then 3–5 random ones, so built-in keys like "sys-tapestry" never match.
+  const m = /^(?:sys|flow)-([0-9a-z]{8})[0-9a-z]{3,5}$/.exec(key);
+  const t = m ? parseInt(m[1], 36) : NaN;
+  return Number.isFinite(t) && t > Date.UTC(2024, 0, 1) && t < Date.now() + 864e5 ? t : null;
+}
+async function cleanUp() {
+  const fmtDay = (t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const build = (sinceDay, opts) => {
+    const since = new Date(sinceDay + 'T00:00:00').getTime();
+    const sys = new Map(), flows = new Map();
+    for (const s of state.systems.values()) {
+      if (opts.imported && IMPORTED_SYSTEMS.includes(s.key)) sys.set(s.key, 'process import');
+      else if (opts.manual && createdAt(s.key) >= since) sys.set(s.key, `added ${fmtDay(createdAt(s.key))}`);
+    }
+    for (const f of state.flows.values()) {
+      if (opts.imported && IMPORTED_FLOWS.includes(f.key)) flows.set(f.key, 'process import');
+      else if (opts.manual && createdAt(f.key) >= since) flows.set(f.key, `added ${fmtDay(createdAt(f.key))}`);
+      else if (sys.has(f.from) || sys.has(f.to)) flows.set(f.key, 'connects to a system being removed');
+    }
+    return { sys, flows };
+  };
+  const label = (f) => `${sysOf(f.from)?.name || '?'} ${f.kind === 'flow' ? '→' : '⇄'} ${sysOf(f.to)?.name || '?'}${f.name ? ' · ' + f.name : ''}`;
+  const preview = (form) => {
+    const fd = new FormData(form);
+    const r = build(fd.get('since') || '2026-10-13', { imported: fd.get('imported') === 'on', manual: fd.get('manual') === 'on' });
+    const item = (name, why) => `<li>${esc(name)} <span class="cu-why">${esc(why)}</span></li>`;
+    $('#cuList', form).innerHTML = !r.sys.size && !r.flows.size ? '<p class="d-sub">Nothing matches.</p>' : `
+      ${r.sys.size ? `<h4>${r.sys.size} system${r.sys.size > 1 ? 's' : ''}</h4><ul>${[...r.sys].map(([k, why]) => item(sysOf(k).name, why)).join('')}</ul>` : ''}
+      ${r.flows.size ? `<h4>${r.flows.size} connection${r.flows.size > 1 ? 's' : ''} and their steps</h4><ul>${[...r.flows].map(([k, why]) => item(label(state.flows.get(k)), why)).join('')}</ul>` : ''}`;
+    $('button[value=ok]', form).disabled = !r.sys.size && !r.flows.size;
+    $('button[value=ok]', form).textContent = `Delete ${r.sys.size + r.flows.size} item${r.sys.size + r.flows.size === 1 ? '' : 's'} for everyone`;
+    return r;
+  };
+  let result = null;
+  const opened = openDialog(`<form method="dialog" class="cleanup">
+    <h2>Clean up the map</h2>
+    <p class="d-sub">Removes what was added after a date, for everyone at BibleProject. Check the list first: this can't be undone. <b>⋯ → Export as JSON</b> first if you'd like a copy.</p>
+    <label class="cu-opt"><input type="checkbox" name="imported" checked> Everything the processes import added (Cass Bank, Salesforce, giving portals, inboxes and the rest)</label>
+    <label class="cu-opt"><input type="checkbox" name="manual" checked> Anything else added by hand on or after <input type="date" name="since" value="2026-10-13"></label>
+    <div class="cu-list" id="cuList"></div>
+    <div class="d-actions"><button class="btn" value="cancel" formnovalidate autofocus>Cancel</button><button class="btn danger" value="ok">Delete</button></div>
+  </form>`, (fd, form) => { result = preview(form); return true; });
+  const form = $('form', dlg);
+  form.addEventListener('input', () => preview(form));
+  preview(form);
+  if (!await opened) return;
+  closeDrawer();
+  const n = result.sys.size + result.flows.size;
+  for (const k of result.flows.keys()) await deleteEntity('flows', k);
+  for (const k of result.sys.keys()) await deleteEntity('systems', k);
+  renderCanvas();
+  fitAll();
+  toast(`Removed ${n} item${n === 1 ? '' : 's'}.`);
+}
+
 function exportJSON() {
   const data = {
     exportedAt: new Date().toISOString(),
@@ -1605,7 +1674,7 @@ document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e
 menu.addEventListener('click', (e) => {
   const b = e.target.closest('[data-menu]'); if (!b) return;
   menu.hidden = true;
-  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, refresh: () => reload().then(() => toast('Up to date.')), live: liveStatus })[b.dataset.menu]();
+  ({ fit: () => fitAll(), tidy: tidyLayout, export: exportJSON, refresh: () => reload().then(() => toast('Up to date.')), live: liveStatus, cleanup: cleanUp })[b.dataset.menu]();
 });
 
 /* =====================================================================================
